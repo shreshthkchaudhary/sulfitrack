@@ -1,5 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import { db } from './db';
 import { workersRouter } from './routes/workers';
 import { recordsRouter } from './routes/records';
@@ -92,3 +94,12 @@ app.use('/api/*', (req: Request, res: Response) => {
     error: `API route ${req.method} ${req.originalUrl} not found`
   });
 });
+
+// Serve compiled static frontend in production (Render, Railway, VPS, etc.)
+const distPath = path.resolve(process.cwd(), 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req: Request, res: Response) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
