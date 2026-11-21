@@ -124,6 +124,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
   // Automated Hardware QR Code Detection State
   const [detectedQr, setDetectedQr] = useState<DecodedQRInfo | null>(null);
   const [qrScanNotice, setQrScanNotice] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const imageElementRef = useRef<HTMLImageElement>(null);
 
@@ -305,6 +306,11 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     // Run smart CV detection on captured frame
     const cv = detectDosimeterPatch(canvas);
     setCvResult(cv);
+    if (!cv.validation.isValid) {
+      setValidationError(cv.validation.rejectionReason || 'Invalid image: Not an authentic SulfiTrack dosimeter strip.');
+    } else {
+      setValidationError(null);
+    }
     setDetectedLayout(cv.layout);
     setPatchRoiNorm(cv.patchRoiNormalized);
     setWhiteRefRoiNorm(cv.whiteRefRoiNormalized);
@@ -319,6 +325,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     scanDosimeterQR(canvas, currentWorkers).then((qr) => {
       if (qr.detected) {
         setDetectedQr(qr);
+        setValidationError(null);
         playQRSound();
         if (qr.workerId) setSelectedWorkerId(qr.workerId);
         if (qr.badgeId) setCustomBadgeId(qr.badgeId);
@@ -336,6 +343,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     setCapturedSnapshot(null);
     setDetectedQr(null);
     setQrScanNotice(null);
+    setValidationError(null);
     startCamera();
   };
 
@@ -364,6 +372,11 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
           // Run smart computer-vision detection
           const cv = detectDosimeterPatch(canvas);
           setCvResult(cv);
+          if (!cv.validation.isValid) {
+            setValidationError(cv.validation.rejectionReason || 'Invalid photo: Not a recognized SulfiTrack dosimeter strip.');
+          } else {
+            setValidationError(null);
+          }
           setDetectedLayout(cv.layout);
           setPatchRoiNorm(cv.patchRoiNormalized);
           setWhiteRefRoiNorm(cv.whiteRefRoiNormalized);
@@ -378,6 +391,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
           scanDosimeterQR(canvas, currentWorkers).then((qr) => {
             if (qr.detected) {
               setDetectedQr(qr);
+              setValidationError(null);
               playQRSound();
               if (qr.workerId) setSelectedWorkerId(qr.workerId);
               if (qr.badgeId) setCustomBadgeId(qr.badgeId);
@@ -385,6 +399,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
               setTimeout(() => setQrScanNotice(null), 6000);
             } else if (cv.qrInfo?.detected) {
               setDetectedQr(cv.qrInfo);
+              setValidationError(null);
               playQRSound();
               if (cv.qrInfo.workerId) setSelectedWorkerId(cv.qrInfo.workerId);
               if (cv.qrInfo.badgeId) setCustomBadgeId(cv.qrInfo.badgeId);
@@ -411,6 +426,11 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     const canvas = canvasRef.current;
     const cv = detectDosimeterPatch(canvas, layout);
     setCvResult(cv);
+    if (!cv.validation.isValid) {
+      setValidationError(cv.validation.rejectionReason || 'Invalid photo: Not a recognized SulfiTrack dosimeter strip.');
+    } else {
+      setValidationError(null);
+    }
     setDetectedLayout(cv.layout);
     setPatchRoiNorm(cv.patchRoiNormalized);
     setWhiteRefRoiNorm(cv.whiteRefRoiNormalized);
@@ -497,6 +517,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     setNormalizedHex(preset.colorHex);
     setWhiteRefRgb({ r: 245, g: 243, b: 236 });
     setCustomBadgeId(preset.badgeId);
+    setValidationError(null);
 
     // If matching worker exists, select them
     if (preset.workerId) {
@@ -506,6 +527,10 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
 
   // Run the full SpectroCV analysis pipeline
   const handleRunAnalysis = () => {
+    if (validationError) {
+      return;
+    }
+
     const activeImage =
       activeTab === 'camera'
         ? capturedSnapshot || 'https://lh3.googleusercontent.com/aida-public/AB6AXuCRcQitauIBBmBNkxwZV2N7bT1S6bnhk2ERfey9nsdsqH8_1PcLFbLSOTxpVp3NXDeeCYs9xB6tkoxTzxXqm89Wk5uqzK0oiVMusUAxZxiQ9IE4vD0eLAa3gtXfYuwTzzfoAOSuM-Rv8ZEBhYwkjWey69kHvy4Z4v-M8i1ngUNYE3e_7gduRx3Iu59J-bp1o9dgj3DSzFzmu4-GxEGng1nyRTggw4-9u9O8wvGir2_rXsrWNKU8rhJAoA'
@@ -525,7 +550,9 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
       shift: activeWorker.shift || 'Evening (Shift B)',
       tempC,
       humidityRH,
-      deviceSource: activeTab === 'camera' ? 'camera' : 'upload'
+      deviceSource: activeTab === 'camera' ? 'camera' : 'upload',
+      isValid: !validationError,
+      validationError
     };
 
     onStartAnalysis(scanContext);
@@ -642,7 +669,8 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
 
       {/* Main Viewfinder / Scanner Area */}
       {activeTab === 'camera' ? (
-        <div className="relative w-full h-[400px] rounded-2xl overflow-hidden bg-slate-950 shadow-md border border-slate-800 flex flex-col justify-between p-4">
+        <div className="flex flex-col gap-3">
+          <div className="relative w-full h-[400px] rounded-2xl overflow-hidden bg-slate-950 shadow-md border border-slate-800 flex flex-col justify-between p-4">
           {/* Flash screen effect */}
           {flashOn && (
             <div className="absolute inset-0 bg-white/40 pointer-events-none z-30 transition-opacity"></div>
@@ -810,6 +838,40 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
             )}
           </div>
         </div>
+
+        {/* Camera Snapshot Rejection Alert Banner */}
+        {capturedSnapshot && validationError && (
+          <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-red-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-fadeIn">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                <span className="material-symbols-outlined text-[22px]">block</span>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-extrabold text-sm text-red-950">Captured Photo Rejected</span>
+                  <span className="text-[10px] bg-red-200 text-red-900 border border-red-300 px-1.5 py-0.2 rounded font-bold uppercase tracking-wider">
+                    Non-Dosimeter
+                  </span>
+                </div>
+                <p className="text-xs text-red-800 mt-1 font-medium">
+                  {validationError}
+                </p>
+                <p className="text-[11px] text-red-700 mt-0.5">
+                  Hold the physical SulfiTrack dosimeter strip inside the central targeting frame with adequate lighting and retake.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleRetakeCamera}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl shrink-0 shadow-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+            >
+              <span className="material-symbols-outlined text-[16px]">replay</span>
+              <span>Retake Photo</span>
+            </button>
+          </div>
+        )}
+      </div>
       ) : (
         /* Upload Mode View with Smart CV Targeting & Interactive Reticle */
         <div className="flex flex-col gap-3">
@@ -830,11 +892,13 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                 />
 
                 {/* Top Telemetry Scrim */}
-                <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 via-black/30 to-transparent p-3 pointer-events-none flex items-center justify-between z-20">
+                <div className={`absolute top-0 inset-x-0 ${validationError ? 'bg-gradient-to-b from-red-950/90 via-red-950/40 to-transparent' : 'bg-gradient-to-b from-black/80 via-black/30 to-transparent'} p-3 pointer-events-none flex items-center justify-between z-20`}>
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span className="text-xs font-mono font-bold text-white bg-slate-900/80 px-2.5 py-1 rounded-md border border-slate-700">
-                      {detectedLayout === 'standard-strip'
+                    <span className={`w-2.5 h-2.5 rounded-full ${validationError ? 'bg-red-500 animate-ping' : 'bg-emerald-400 animate-pulse'}`}></span>
+                    <span className={`text-xs font-mono font-bold text-white px-2.5 py-1 rounded-md border ${validationError ? 'bg-red-950 border-red-500 text-red-200' : 'bg-slate-900/80 border-slate-700'}`}>
+                      {validationError
+                        ? 'NON-DOSIMETER IMAGE REJECTED'
+                        : detectedLayout === 'standard-strip'
                         ? 'SulfiTrack Standard Strip (Center H₂S Passive Window)'
                         : detectedLayout === 'wristband-center'
                         ? 'Wristband Casing (Center Aperture Detected)'
@@ -842,14 +906,14 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                     </span>
                   </div>
 
-                  <span className="text-[11px] font-mono font-semibold text-orange-300 bg-orange-950/80 px-2 py-0.5 rounded border border-orange-500/40">
-                    Click image to fine-tune
+                  <span className={`text-[11px] font-mono font-semibold px-2 py-0.5 rounded border ${validationError ? 'text-red-200 bg-red-900/90 border-red-500' : 'text-orange-300 bg-orange-950/80 border-orange-500/40'}`}>
+                    {validationError ? 'REJECTED' : 'Click image to fine-tune'}
                   </span>
                 </div>
 
                 {/* Reticle: Active Chemical Patch Target Box */}
                 <div
-                  className="absolute border-2 border-orange-400 bg-orange-500/20 rounded-md transition-all duration-150 pointer-events-none z-10 shadow-[0_0_15px_rgba(249,115,22,0.6)]"
+                  className={`absolute border-2 ${validationError ? 'border-red-500 bg-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.7)]' : 'border-orange-400 bg-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.6)]'} rounded-md transition-all duration-150 pointer-events-none z-10`}
                   style={{
                     left: `${patchRoiNorm.xPct}%`,
                     top: `${patchRoiNorm.yPct}%`,
@@ -876,8 +940,8 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                   </div>
 
                   {/* Floating label */}
-                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap bg-orange-600 text-white font-mono text-[9px] font-extrabold px-1.5 py-0.5 rounded shadow-sm border border-orange-300">
-                    {detectedLayout === 'legacy-left' ? 'H₂S REAGENT PATCH (LEFT)' : 'H₂S PASSIVE STRIP (CENTER)'}
+                  <div className={`absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-white font-mono text-[9px] font-extrabold px-1.5 py-0.5 rounded shadow-sm border ${validationError ? 'bg-red-600 border-red-300' : 'bg-orange-600 border-orange-300'}`}>
+                    {validationError ? 'STRIP NOT DETECTED' : detectedLayout === 'legacy-left' ? 'H₂S REAGENT PATCH (LEFT)' : 'H₂S PASSIVE STRIP (CENTER)'}
                   </div>
                 </div>
 
@@ -949,6 +1013,39 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                 </div>
               </div>
 
+              {/* Photo Rejection Alert Banner */}
+              {validationError && (
+                <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-red-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-fadeIn">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                      <span className="material-symbols-outlined text-[22px]">block</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-extrabold text-sm text-red-950">Photo Rejected: Non-Dosimeter Image</span>
+                        <span className="text-[10px] bg-red-200 text-red-900 border border-red-300 px-1.5 py-0.2 rounded font-bold uppercase tracking-wider">
+                          Verification Failed
+                        </span>
+                      </div>
+                      <p className="text-xs text-red-800 mt-1 font-medium">
+                        {validationError}
+                      </p>
+                      <p className="text-[11px] text-red-700/90 mt-0.5">
+                        Only authentic SulfiTrack dosimeter strips or wristbands with visible reagent aperture and calibration markings can be analyzed. Faces, screenshots, and arbitrary objects are rejected.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl shrink-0 shadow-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">file_upload</span>
+                    <span>Upload Valid Strip</span>
+                  </button>
+                </div>
+              )}
+
               {/* Hardware QR Code Verified Status Card */}
               {detectedQr && (
                 <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 text-xs shadow-xs animate-fadeIn">
@@ -998,6 +1095,11 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                       if (!canvasRef.current) return;
                       const cv = detectDosimeterPatch(canvasRef.current);
                       setCvResult(cv);
+                      if (!cv.validation.isValid) {
+                        setValidationError(cv.validation.rejectionReason || 'Invalid photo: Not a recognized SulfiTrack dosimeter strip.');
+                      } else {
+                        setValidationError(null);
+                      }
                       setDetectedLayout(cv.layout);
                       setPatchRoiNorm(cv.patchRoiNormalized);
                       setWhiteRefRoiNorm(cv.whiteRefRoiNormalized);
@@ -1291,26 +1393,37 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
       </div>
 
       {/* Pre-Scan Quality Verification Checklist */}
-      <div className="bg-white rounded-xl p-4 shadow-sm flex flex-col space-y-2 border border-slate-200">
+      <div className={`bg-white rounded-xl p-4 shadow-sm flex flex-col space-y-2 border ${validationError ? 'border-red-300 bg-red-50/20' : 'border-slate-200'}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="font-bold text-xs text-slate-900">Pre-Scan Spectrophotometric Protocol</span>
             <span className="text-[10px] text-slate-500 font-mono">ISO-45001</span>
           </div>
-          <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-            <span className="material-symbols-outlined text-[13px] text-emerald-600">check</span>
-            Ready for SpectroCV Analysis
-          </span>
+          {validationError ? (
+            <span className="text-[11px] font-bold text-red-800 bg-red-100 border border-red-300 px-2 py-0.5 rounded-md flex items-center gap-1">
+              <span className="material-symbols-outlined text-[13px] text-red-600">close</span>
+              Verification Failed · Strip Rejected
+            </span>
+          ) : (
+            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+              <span className="material-symbols-outlined text-[13px] text-emerald-600">check</span>
+              Ready for SpectroCV Analysis
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-          <div className="flex items-center gap-1.5 bg-slate-50 p-2 rounded-lg border border-slate-200">
-            <span className="material-symbols-outlined text-[16px] text-emerald-600">check_circle</span>
-            <span className="text-slate-800 font-medium text-[11px]">Wristband in Frame</span>
+          <div className={`flex items-center gap-1.5 p-2 rounded-lg border ${validationError ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+            <span className={`material-symbols-outlined text-[16px] ${validationError ? 'text-red-500' : 'text-emerald-600'}`}>
+              {validationError ? 'cancel' : 'check_circle'}
+            </span>
+            <span className="text-slate-800 font-medium text-[11px]">Substrate Identity</span>
           </div>
-          <div className="flex items-center gap-1.5 bg-slate-50 p-2 rounded-lg border border-slate-200">
-            <span className="material-symbols-outlined text-[16px] text-emerald-600">check_circle</span>
-            <span className="text-slate-800 font-medium text-[11px]">Reference Scale OK</span>
+          <div className={`flex items-center gap-1.5 p-2 rounded-lg border ${validationError ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+            <span className={`material-symbols-outlined text-[16px] ${validationError ? 'text-red-500' : 'text-emerald-600'}`}>
+              {validationError ? 'cancel' : 'check_circle'}
+            </span>
+            <span className="text-slate-800 font-medium text-[11px]">Strip Markings OK</span>
           </div>
           <div className="flex items-center gap-1.5 bg-slate-50 p-2 rounded-lg border border-slate-200">
             <span className="material-symbols-outlined text-[16px] text-emerald-600">check_circle</span>
@@ -1325,15 +1438,27 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
 
       {/* Primary Action Button: Run SpectroCV Analysis */}
       <div className="pt-1">
-        <button
-          id="capture-analyse-btn"
-          type="button"
-          onClick={handleRunAnalysis}
-          className="w-full h-13 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-md shadow-orange-950/20 transition-all active:scale-[0.98] cursor-pointer text-sm"
-        >
-          <span className="material-symbols-outlined text-[22px]">analytics</span>
-          <span>Run SpectroCV Chemical & Exposure Analysis</span>
-        </button>
+        {validationError ? (
+          <button
+            type="button"
+            disabled
+            className="w-full h-13 bg-slate-100 text-slate-400 font-bold rounded-xl flex items-center justify-center gap-2 cursor-not-allowed text-sm border-2 border-dashed border-red-300 shadow-none"
+            title="Analysis is disabled because the uploaded image is not a valid SulfiTrack dosimeter strip"
+          >
+            <span className="material-symbols-outlined text-[20px] text-red-500">block</span>
+            <span className="text-red-700 font-extrabold">Photo Rejected · Valid SulfiTrack Dosimeter Required</span>
+          </button>
+        ) : (
+          <button
+            id="capture-analyse-btn"
+            type="button"
+            onClick={handleRunAnalysis}
+            className="w-full h-13 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-md shadow-orange-950/20 transition-all active:scale-[0.98] cursor-pointer text-sm"
+          >
+            <span className="material-symbols-outlined text-[22px]">analytics</span>
+            <span>Run SpectroCV Chemical & Exposure Analysis</span>
+          </button>
+        )}
       </div>
 
       {/* Floating Hardware QR Audio/Visual Confirmation Toast */}

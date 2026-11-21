@@ -54,6 +54,19 @@ export interface ReferenceSwatch {
   roiNormalized: NormalizedROI;
 }
 
+export interface DosimeterValidationResult {
+  isValid: boolean;
+  score: number;
+  rejectionReason?: string;
+  checks: {
+    substrate: boolean;
+    aspect: boolean;
+    brandTitle: boolean;
+    centerFeature: boolean;
+    qrPattern: boolean;
+  };
+}
+
 export interface DosimeterCVResult {
   cardBounds: {
     minX: number;
@@ -80,6 +93,7 @@ export interface DosimeterCVResult {
   status: 'Safe' | 'Warning' | 'Critical';
   deltaE: number;
   qrInfo?: DecodedQRInfo;
+  validation: DosimeterValidationResult;
 }
 
 export function rgbToHex(r: number, g: number, b: number): string {
@@ -285,7 +299,19 @@ export function detectDosimeterPatch(
       normalizedHex: rgbToHex(fallbackRgb.r, fallbackRgb.g, fallbackRgb.b),
       estimatedExposure: 0.2,
       status: 'Safe',
-      deltaE: 0.15
+      deltaE: 0.15,
+      validation: {
+        isValid: false,
+        score: 0,
+        rejectionReason: 'Invalid image dimensions or empty canvas buffer.',
+        checks: {
+          substrate: false,
+          aspect: false,
+          brandTitle: false,
+          centerFeature: false,
+          qrPattern: false
+        }
+      }
     };
   }
 
@@ -488,6 +514,14 @@ export function detectDosimeterPatch(
   // 9. Auto-Scan QR Badge if visible on canvas
   const qrInfo = scanDosimeterQRSync(canvas);
 
+  // 10. Run Automated Dosimeter Authenticity Validation
+  const validation = validateDosimeterImage(canvas);
+  // If QR code was verified by jsQR, ensure validation passes
+  if (qrInfo?.detected) {
+    validation.isValid = true;
+    validation.checks.qrPattern = true;
+  }
+
   return {
     cardBounds: { minX, maxX, minY, maxY, width: cardW, height: cardH },
     layout,
@@ -516,7 +550,172 @@ export function detectDosimeterPatch(
     estimatedExposure: dose,
     status,
     deltaE,
-    qrInfo
+    qrInfo,
+    validation
+  };
+}
+
+/**
+ * Rigorously validates whether an image/frame depicts an authentic SulfiTrack dosimeter strip
+ * or wristband, rejecting non-strip images (faces, screenshots, random objects, etc.)
+ */
+export function validateDosimeterImage(canvas: HTMLCanvasElement): DosimeterValidationResult {
+  const w = canvas.width;
+  const h = canvas.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx || w < 20 || h < 20) {
+    return {
+      isValid: false,
+      score: 0,
+      rejectionReason: 'Invalid image dimensions or rendering context',
+      checks: { substrate: false, aspect: false, brandTitle: false, centerFeature: false, qrPattern: false }
+    };
+  }
+
+  const imgData = ctx.getImageData(0, 0, w, h).data;
+
+  // 1. Scan vertical profile to find card bounds
+  let foundTop = false, minY = 0, maxY = h - 1;
+  for (let y = 0; y < h; y += 4) {
+    let brightCount = 0;
+    for (let x = 0; x < w; x += 8) {
+      const idx = (y * w + x) * 4;
+      const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const diff = Math.max(r, g, b) - Math.min(r, g, b);
+      if (lum > 95 && diff < 48) brightCount++;
+    }
+    const ratio = brightCount / (w / 8);
+    if (!foundTop && ratio > 0.18) { minY = y; foundTop = true; }
+    if (foundTop && ratio > 0.18) { maxY = y; }
+  }
+
+  const cardH = maxY - minY;
+  const midY = Math.floor((minY + maxY) / 2);
+  let minX = 0, maxX = w - 1;
+
+  for (let x = 0; x < w; x += 4) {
+    const idx = (midY * w + x) * 4;
+    const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
+    if (lum > 85) { minX = x; break; }
+  }
+  for (let x = w - 1; x >= 0; x -= 4) {
+    const idx = (midY * w + x) * 4;
+    const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
+    if (lum > 85) { maxX = x; break; }
+  }
+
+  const cardW = maxX - minX;
+  const cardAspect = cardW / Math.max(1, cardH);
+
+  // 2. Measure substrate white density inside card bounds
+  let cardPixels = 0, cardWhiteCount = 0;
+  for (let y = minY; y <= maxY; y += 4) {
+    for (let x = minX; x <= maxX; x += 4) {
+      const idx = (y * w + x) * 4;
+      const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const diff = Math.max(r, g, b) - Math.min(r, g, b);
+      cardPixels++;
+      if (lum > 105 && diff < 48) cardWhiteCount++;
+    }
+  }
+
+  const whiteDensity = cardPixels > 0 ? cardWhiteCount / cardPixels : 0;
+
+  // 3. Scan brand text 'SULFITRACK' in upper-left
+  let brandEdges = 0;
+  const bY1 = Math.round(minY + cardH * 0.08);
+  const bY2 = Math.round(minY + cardH * 0.26);
+  const bX1 = Math.round(minX + cardW * 0.03);
+  const bX2 = Math.round(minX + cardW * 0.32);
+
+  for (let y = bY1; y <= bY2; y += 3) {
+    for (let x = bX1; x <= bX2; x += 2) {
+      const idx1 = (y * w + x) * 4;
+      const idx2 = (y * w + (x + 2)) * 4;
+      const l1 = 0.299 * imgData[idx1] + 0.587 * imgData[idx1 + 1] + 0.114 * imgData[idx1 + 2];
+      const l2 = 0.299 * imgData[idx2] + 0.587 * imgData[idx2 + 1] + 0.114 * imgData[idx2 + 2];
+      if (Math.abs(l1 - l2) > 40) brandEdges++;
+    }
+  }
+
+  // 4. Scan center text 'H2S PASSIVE STRIP' / aperture border
+  let centerFeatureEdges = 0;
+  const cY1 = Math.round(minY + cardH * 0.15);
+  const cY2 = Math.round(minY + cardH * 0.36);
+  const cX1 = Math.round(minX + cardW * 0.33);
+  const cX2 = Math.round(minX + cardW * 0.68);
+
+  for (let y = cY1; y <= cY2; y += 3) {
+    for (let x = cX1; x <= cX2; x += 2) {
+      const idx1 = (y * w + x) * 4;
+      const idx2 = (y * w + (x + 2)) * 4;
+      const l1 = 0.299 * imgData[idx1] + 0.587 * imgData[idx1 + 1] + 0.114 * imgData[idx1 + 2];
+      const l2 = 0.299 * imgData[idx2] + 0.587 * imgData[idx2 + 1] + 0.114 * imgData[idx2 + 2];
+      if (Math.abs(l1 - l2) > 40) centerFeatureEdges++;
+    }
+  }
+
+  // 5. Scan QR pattern density in right quadrant
+  let qrEdges = 0;
+  const qY1 = Math.round(minY + cardH * 0.30);
+  const qY2 = Math.round(minY + cardH * 0.75);
+  const qX1 = Math.round(minX + cardW * 0.78);
+  const qX2 = Math.round(minX + cardW * 0.98);
+
+  for (let y = qY1; y <= qY2; y += 3) {
+    for (let x = qX1; x <= qX2; x += 2) {
+      const idx1 = (y * w + x) * 4;
+      const idx2 = (y * w + (x + 2)) * 4;
+      const l1 = 0.299 * imgData[idx1] + 0.587 * imgData[idx1 + 1] + 0.114 * imgData[idx1 + 2];
+      const l2 = 0.299 * imgData[idx2] + 0.587 * imgData[idx2 + 1] + 0.114 * imgData[idx2 + 2];
+      if (Math.abs(l1 - l2) > 40) qrEdges++;
+    }
+  }
+
+  const hasSubstrate = whiteDensity >= 0.26;
+  const hasAspect = cardAspect >= 1.1 && cardAspect <= 4.5;
+  const hasBrand = brandEdges >= 90;
+  const hasCenterFeature = centerFeatureEdges >= 70;
+  const hasQRPattern = qrEdges >= 105;
+
+  let markerCount = 0;
+  if (hasBrand) markerCount++;
+  if (hasCenterFeature) markerCount++;
+  if (hasQRPattern) markerCount++;
+
+  let score = 0;
+  if (hasSubstrate) score += 30;
+  if (hasAspect) score += 20;
+  if (hasBrand) score += 25;
+  if (hasCenterFeature) score += 25;
+  if (hasQRPattern) score += 25;
+
+  const isValid = hasSubstrate && hasAspect && (markerCount >= 2 || (hasQRPattern && markerCount >= 1));
+
+  let rejectionReason: string | undefined;
+  if (!isValid) {
+    if (!hasSubstrate) {
+      rejectionReason = 'No dosimeter card substrate detected. Please ensure the white dosimeter card is clearly visible.';
+    } else if (!hasAspect) {
+      rejectionReason = 'Invalid card aspect ratio. The dosimeter strip must be positioned horizontally in the frame.';
+    } else {
+      rejectionReason = 'Missing SulfiTrack strip markings (brand title, H2S aperture, or calibration QR code not detected).';
+    }
+  }
+
+  return {
+    isValid,
+    score,
+    rejectionReason,
+    checks: {
+      substrate: hasSubstrate,
+      aspect: hasAspect,
+      brandTitle: hasBrand,
+      centerFeature: hasCenterFeature,
+      qrPattern: hasQRPattern
+    }
   };
 }
 

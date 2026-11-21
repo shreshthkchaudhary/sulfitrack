@@ -70,6 +70,8 @@ export interface ScanContextData {
   tempC: number;
   humidityRH: number;
   deviceSource?: 'camera' | 'upload' | 'preset';
+  isValid?: boolean;
+  validationError?: string | null;
   analysisResult?: {
     exposureValue: number;
     exposureStr: string;

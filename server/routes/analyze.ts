@@ -21,6 +21,14 @@ analyzeRouter.post('/', async (req: Request, res: Response) => {
       department = 'Hydrocracker Unit (HCU-2)'
     } = req.body;
 
+    if (req.body.isValid === false) {
+      return res.status(400).json({
+        success: false,
+        error: 'INVALID_DOSIMETER_STRIP',
+        message: 'The submitted image was rejected because it could not be verified as an authentic SulfiTrack dosimeter strip.'
+      });
+    }
+
     let sampleRgb = rgb || req.body.sampledRgb;
 
     // If no RGB provided, default to calibrated baseline or warning level
