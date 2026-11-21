@@ -342,6 +342,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
   // Handle uploaded file with full computer-vision detection
   const processUploadedFile = (file: File) => {
     if (!file.type.startsWith('image/')) return;
+    setActiveTab('upload');
     const reader = new FileReader();
     reader.onload = (e) => {
       const dataUrl = e.target?.result as string;
@@ -350,48 +351,54 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
       // Create an image element to run full CV dosimeter detection
       const img = new Image();
       img.onload = () => {
-        if (!canvasRef.current) return;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        try {
+          if (!canvasRef.current) return;
+          const canvas = canvasRef.current;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
 
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
 
-        // Run smart computer-vision detection
-        const cv = detectDosimeterPatch(canvas);
-        setCvResult(cv);
-        setDetectedLayout(cv.layout);
-        setPatchRoiNorm(cv.patchRoiNormalized);
-        setWhiteRefRoiNorm(cv.whiteRefRoiNormalized);
-        setSampledRgb(cv.sampledRgb);
-        setSampledHex(cv.sampledHex);
-        setWhiteRefRgb(cv.whiteRefRgb);
-        setNormalizedRgb(cv.normalizedRgb);
-        setNormalizedHex(cv.normalizedHex);
-        setLiveEstimate({ dose: cv.estimatedExposure, status: cv.status, deltaE: cv.deltaE });
+          // Run smart computer-vision detection
+          const cv = detectDosimeterPatch(canvas);
+          setCvResult(cv);
+          setDetectedLayout(cv.layout);
+          setPatchRoiNorm(cv.patchRoiNormalized);
+          setWhiteRefRoiNorm(cv.whiteRefRoiNormalized);
+          setSampledRgb(cv.sampledRgb);
+          setSampledHex(cv.sampledHex);
+          setWhiteRefRgb(cv.whiteRefRgb);
+          setNormalizedRgb(cv.normalizedRgb);
+          setNormalizedHex(cv.normalizedHex);
+          setLiveEstimate({ dose: cv.estimatedExposure, status: cv.status, deltaE: cv.deltaE });
 
-        // Run full QR detection across native & enhanced passes
-        scanDosimeterQR(canvas, currentWorkers).then((qr) => {
-          if (qr.detected) {
-            setDetectedQr(qr);
-            playQRSound();
-            if (qr.workerId) setSelectedWorkerId(qr.workerId);
-            if (qr.badgeId) setCustomBadgeId(qr.badgeId);
-            setQrScanNotice(`Hardware QR Verified: ${qr.rawText} · Auto-Assigned to ${qr.workerName} (${qr.badgeId})`);
-            setTimeout(() => setQrScanNotice(null), 6000);
-          } else if (cv.qrInfo?.detected) {
-            setDetectedQr(cv.qrInfo);
-            playQRSound();
-            if (cv.qrInfo.workerId) setSelectedWorkerId(cv.qrInfo.workerId);
-            if (cv.qrInfo.badgeId) setCustomBadgeId(cv.qrInfo.badgeId);
-            setQrScanNotice(`Hardware QR Verified: ${cv.qrInfo.rawText} · Auto-Assigned to ${cv.qrInfo.workerName} (${cv.qrInfo.badgeId})`);
-            setTimeout(() => setQrScanNotice(null), 6000);
-          } else {
-            setDetectedQr(null);
-          }
-        });
+          // Run full QR detection across native & enhanced passes
+          scanDosimeterQR(canvas, currentWorkers).then((qr) => {
+            if (qr.detected) {
+              setDetectedQr(qr);
+              playQRSound();
+              if (qr.workerId) setSelectedWorkerId(qr.workerId);
+              if (qr.badgeId) setCustomBadgeId(qr.badgeId);
+              setQrScanNotice(`Hardware QR Verified: ${qr.rawText} · Auto-Assigned to ${qr.workerName} (${qr.badgeId})`);
+              setTimeout(() => setQrScanNotice(null), 6000);
+            } else if (cv.qrInfo?.detected) {
+              setDetectedQr(cv.qrInfo);
+              playQRSound();
+              if (cv.qrInfo.workerId) setSelectedWorkerId(cv.qrInfo.workerId);
+              if (cv.qrInfo.badgeId) setCustomBadgeId(cv.qrInfo.badgeId);
+              setQrScanNotice(`Hardware QR Verified: ${cv.qrInfo.rawText} · Auto-Assigned to ${cv.qrInfo.workerName} (${cv.qrInfo.badgeId})`);
+              setTimeout(() => setQrScanNotice(null), 6000);
+            } else {
+              setDetectedQr(null);
+            }
+          }).catch((err) => {
+            console.warn('[QR Scan Error]', err);
+          });
+        } catch (cvErr) {
+          console.error('[CV Error on upload]', cvErr);
+        }
       };
       img.src = dataUrl;
     };
@@ -913,9 +920,9 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                 )}
 
                 {/* Reticle: Physical Reference Swatches A-E */}
-                {cvResult?.referenceSwatches && cvResult.referenceSwatches.map((swatch) => (
+                {Array.isArray(cvResult?.referenceSwatches) && cvResult.referenceSwatches.map((swatch) => (
                   <div
-                    key={swatch.id}
+                    key={swatch.id || swatch.letter}
                     className="absolute border border-white/60 bg-black/20 rounded-xs pointer-events-none z-10 transition-all duration-150 flex items-center justify-center"
                     style={{
                       left: `${swatch.roiNormalized.xPct}%`,
@@ -925,7 +932,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                     }}
                   >
                     <span className="text-[7px] font-mono font-bold text-white bg-slate-950/85 px-0.5 rounded -bottom-3.5 absolute border border-slate-700">
-                      {swatch.label}
+                      {swatch.letter || swatch.label}
                     </span>
                   </div>
                 ))}

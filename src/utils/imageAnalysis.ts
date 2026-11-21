@@ -43,6 +43,8 @@ export interface DecodedQRInfo {
 export type DosimeterLayout = 'standard-strip' | 'wristband-center' | 'legacy-left';
 
 export interface ReferenceSwatch {
+  id: string;
+  letter: string;
   label: string;
   ppmH: number;
   hex: string;
@@ -67,13 +69,7 @@ export interface DosimeterCVResult {
   patchRoiNormalized: NormalizedROI;
   whiteRefRoi: ROI;
   whiteRefRoiNormalized: NormalizedROI;
-  referenceSwatches?: {
-    A: ReferenceSwatch;
-    B: ReferenceSwatch;
-    C: ReferenceSwatch;
-    D: ReferenceSwatch;
-    E: ReferenceSwatch;
-  };
+  referenceSwatches?: ReferenceSwatch[];
   sampledRgb: RGB;
   sampledHex: string;
   whiteRefRgb: RGB;
@@ -447,7 +443,16 @@ export function detectDosimeterPatch(
   const { dose, status, deltaE } = quickEstimateExposure(normalizedRgb);
 
   // 8. Sample the 5 Physical Reference Swatches (A, B, C, D, E) for internal validation
-  const sampleSwatch = (xPct: number, yPct: number, wPct: number, hPct: number, label: string, ppmH: number): ReferenceSwatch => {
+  const sampleSwatch = (
+    id: string,
+    letter: string,
+    xPct: number,
+    yPct: number,
+    wPct: number,
+    hPct: number,
+    label: string,
+    ppmH: number
+  ): ReferenceSwatch => {
     const sx = Math.round(minX + cardW * xPct);
     const sy = Math.round(minY + cardH * yPct);
     const sw = Math.round(cardW * wPct);
@@ -455,6 +460,8 @@ export function detectDosimeterPatch(
     const raw = sampleAreaRGB(ctx, sx, sy, sw, sh, w, h);
     const norm = normalizeWithWhiteRef(raw, whiteRefRgb);
     return {
+      id,
+      letter,
       label,
       ppmH,
       rgb: raw,
@@ -470,13 +477,13 @@ export function detectDosimeterPatch(
     };
   };
 
-  const referenceSwatches = {
-    A: sampleSwatch(0.085, 0.46, 0.045, 0.11, 'Swatch A: Blank Standard (0 PPM·h)', 0.0),
-    B: sampleSwatch(0.150, 0.46, 0.045, 0.11, 'Swatch B: Low Exposure (2.5 PPM·h)', 2.5),
-    C: sampleSwatch(0.215, 0.46, 0.045, 0.11, 'Swatch C: Shift Permissible (5.0 PPM·h)', 5.0),
-    D: sampleSwatch(0.715, 0.46, 0.045, 0.11, 'Swatch D: Shift Ceiling (10.0 PPM·h)', 10.0),
-    E: sampleSwatch(0.780, 0.46, 0.045, 0.11, 'Swatch E: Hazardous Saturated (12.5 PPM·h)', 12.5)
-  };
+  const referenceSwatches: ReferenceSwatch[] = [
+    sampleSwatch('swatch-a', 'A', 0.085, 0.46, 0.045, 0.11, 'Swatch A: Blank Standard (0 PPM·h)', 0.0),
+    sampleSwatch('swatch-b', 'B', 0.150, 0.46, 0.045, 0.11, 'Swatch B: Low Exposure (2.5 PPM·h)', 2.5),
+    sampleSwatch('swatch-c', 'C', 0.215, 0.46, 0.045, 0.11, 'Swatch C: Shift Permissible (5.0 PPM·h)', 5.0),
+    sampleSwatch('swatch-d', 'D', 0.715, 0.46, 0.045, 0.11, 'Swatch D: Shift Ceiling (10.0 PPM·h)', 10.0),
+    sampleSwatch('swatch-e', 'E', 0.780, 0.46, 0.045, 0.11, 'Swatch E: Hazardous Saturated (12.5 PPM·h)', 12.5)
+  ];
 
   // 9. Auto-Scan QR Badge if visible on canvas
   const qrInfo = scanDosimeterQRSync(canvas);
