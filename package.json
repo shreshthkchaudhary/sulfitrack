@@ -36,6 +36,7 @@
     "concurrently": "^10.0.6",
     "esbuild": "^0.25.0",
     "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

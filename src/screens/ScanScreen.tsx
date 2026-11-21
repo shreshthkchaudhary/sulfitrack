@@ -12,7 +12,9 @@ import {
   playQRSound,
   DosimeterCVResult,
   NormalizedROI,
-  DecodedQRInfo
+  DecodedQRInfo,
+  DosimeterLayout,
+  ReferenceSwatch
 } from '../utils/imageAnalysis';
 
 interface ScanScreenProps {
@@ -21,63 +23,63 @@ interface ScanScreenProps {
   currentWorkers?: WorkerTelemetry[];
 }
 
-// Pre-configured hardware dosimeter test strips for presentation demonstrations
+// Pre-configured hardware dosimeter test strips matching physical hardware strips 1, 2, 3
 const PRESET_HARDWARE_STRIPS = [
   {
-    id: 'rajesh-warning',
-    name: 'Shift B Elevated (HCU-2)',
+    id: 'strip-1-blank',
+    name: 'Strip 1: Blank Baseline (Unexposed)',
     worker: 'Rajesh Kumar',
     workerId: 'WRK-1048',
     unit: 'Hydrocracker Unit (HCU-2)',
     badgeId: 'ST-WB-00124',
     shift: 'Evening (Shift B)',
-    colorHex: '#d97706',
-    rgb: { r: 217, g: 119, b: 6 },
-    expectedDose: '10.2 PPM·h',
-    status: 'Warning',
-    description: 'Amber sulfide tint after 8h shift near high-pressure separator'
-  },
-  {
-    id: 'arjun-safe',
-    name: 'Shift A Safe (SRU-3)',
-    worker: 'Arjun Patel',
-    workerId: 'WRK-1052',
-    unit: 'Sulfur Recovery Unit (SRU-3)',
-    badgeId: 'ST-WB-00128',
-    shift: 'Morning (Shift A)',
-    colorHex: '#e2e8f0',
-    rgb: { r: 226, g: 232, b: 240 },
-    expectedDose: '2.1 PPM·h',
+    colorHex: '#f9f6ef',
+    rgb: { r: 249, g: 246, b: 239 },
+    expectedDose: '0.1 PPM·h',
     status: 'Safe',
-    description: 'Pristine paper strip with negligible diffuse discoloration'
+    description: 'Hardware test strip #1 with clean unexposed center H2S aperture'
   },
   {
-    id: 'deepak-critical',
-    name: 'Shift C Critical (Tank 3B)',
+    id: 'strip-2-black',
+    name: 'Strip 2: Heavy Sulfide Darkening',
     worker: 'Deepak Sharma',
     workerId: 'WRK-1077',
     unit: 'Tank Farm 3B & Crude Sludge Pit',
     badgeId: 'ST-WB-00142',
     shift: 'Night (Shift C)',
-    colorHex: '#78350f',
-    rgb: { r: 120, g: 53, b: 15 },
-    expectedDose: '14.8 PPM·h',
+    colorHex: '#1c1c1a',
+    rgb: { r: 28, g: 28, b: 26 },
+    expectedDose: '18.5 PPM·h',
     status: 'Critical',
-    description: 'Heavy dark bismuth sulfide precipitation exceeding shift TWA ceiling'
+    description: 'Hardware test strip #2 with fully blackened saturated center patch'
   },
   {
-    id: 'unexposed-blank',
-    name: 'Factory Unexposed Blank',
-    worker: 'Pre-Shift Calibration',
-    workerId: 'WRK-CAL-01',
-    unit: 'Clean QA Bench',
-    badgeId: 'ST-WB-00000',
-    shift: 'Zero Exposure Standard',
-    colorHex: '#f8fafc',
+    id: 'strip-3-blue',
+    name: 'Strip 3: Saturated Exposure (Indigo)',
+    worker: 'Arjun Patel',
+    workerId: 'WRK-1052',
+    unit: 'Sulfur Recovery Unit (SRU-3)',
+    badgeId: 'ST-WB-00128',
+    shift: 'Morning (Shift A)',
+    colorHex: '#1c2d85',
+    rgb: { r: 28, g: 45, b: 133 },
+    expectedDose: '11.8 PPM·h',
+    status: 'Critical',
+    description: 'Hardware test strip #3 matching Swatch E dark blue reference'
+  },
+  {
+    id: 'strip-4-wristband',
+    name: 'Strip 4: Enclosure Wristband Active',
+    worker: 'Sunil Verma',
+    workerId: 'WRK-1065',
+    unit: 'Amine Treating Unit (ARU-04)',
+    badgeId: 'ST-WB-00135',
+    shift: 'Morning (Shift A)',
+    colorHex: '#f5f3ec',
     rgb: { r: 245, g: 243, b: 236 },
     expectedDose: '0.2 PPM·h',
     status: 'Safe',
-    description: 'Fresh impregnated substrate showing baseline factory white point'
+    description: 'Passive wristband casing with center viewing aperture'
   }
 ];
 
@@ -101,22 +103,22 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
   // Active sampled color & worker context
-  const [selectedPresetId, setSelectedPresetId] = useState<string>('rajesh-warning');
-  const [sampledRgb, setSampledRgb] = useState<{ r: number; g: number; b: number }>({ r: 217, g: 119, b: 6 });
-  const [sampledHex, setSampledHex] = useState<string>('#d97706');
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('strip-1-blank');
+  const [sampledRgb, setSampledRgb] = useState<{ r: number; g: number; b: number }>({ r: 249, g: 246, b: 239 });
+  const [sampledHex, setSampledHex] = useState<string>('#f9f6ef');
 
-  // Advanced Computer Vision & In-Situ Normalization State
+  // Advanced Computer Vision & In-Situ Normalization State (Default: Center H2S Window)
   const [cvResult, setCvResult] = useState<DosimeterCVResult | null>(null);
-  const [detectedLayout, setDetectedLayout] = useState<'standard-left' | 'wristband-center'>('standard-left');
-  const [patchRoiNorm, setPatchRoiNorm] = useState<NormalizedROI>({ xPct: 8, yPct: 33, widthPct: 18, heightPct: 28 });
-  const [whiteRefRoiNorm, setWhiteRefRoiNorm] = useState<NormalizedROI>({ xPct: 68, yPct: 36, widthPct: 9, heightPct: 16 });
+  const [detectedLayout, setDetectedLayout] = useState<DosimeterLayout>('standard-strip');
+  const [patchRoiNorm, setPatchRoiNorm] = useState<NormalizedROI>({ xPct: 34, yPct: 35, widthPct: 34, heightPct: 35 });
+  const [whiteRefRoiNorm, setWhiteRefRoiNorm] = useState<NormalizedROI>({ xPct: 16, yPct: 16, widthPct: 9, heightPct: 10 });
   const [whiteRefRgb, setWhiteRefRgb] = useState<{ r: number; g: number; b: number }>({ r: 245, g: 243, b: 236 });
-  const [normalizedRgb, setNormalizedRgb] = useState<{ r: number; g: number; b: number }>({ r: 217, g: 119, b: 6 });
-  const [normalizedHex, setNormalizedHex] = useState<string>('#d97706');
+  const [normalizedRgb, setNormalizedRgb] = useState<{ r: number; g: number; b: number }>({ r: 249, g: 246, b: 239 });
+  const [normalizedHex, setNormalizedHex] = useState<string>('#f9f6ef');
   const [liveEstimate, setLiveEstimate] = useState<{ dose: number; status: 'Safe' | 'Warning' | 'Critical'; deltaE: number }>({
-    dose: 10.2,
-    status: 'Warning',
-    deltaE: 2.84
+    dose: 0.1,
+    status: 'Safe',
+    deltaE: 0.15
   });
 
   // Automated Hardware QR Code Detection State
@@ -397,7 +399,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
   };
 
   // Switch dosimeter layout format manually
-  const handleSelectLayout = (layout: 'standard-left' | 'wristband-center') => {
+  const handleSelectLayout = (layout: DosimeterLayout) => {
     if (!canvasRef.current) return;
     const canvas = canvasRef.current;
     const cv = detectDosimeterPatch(canvas, layout);
@@ -743,10 +745,10 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
             {/* Top labels */}
             <div className="flex justify-between items-start">
               <div className="bg-slate-900/90 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] text-orange-400 font-mono border border-orange-500/40">
-                H₂S CHEMICAL STRIP TARGET
+                H₂S PASSIVE STRIP (CENTER APERTURE)
               </div>
               <div className="bg-slate-900/90 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] text-slate-200 font-mono border border-slate-700">
-                CALIBRATION RING INDEX
+                SWATCHES A-E & QR INDEX
               </div>
             </div>
 
@@ -825,9 +827,11 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     <span className="text-xs font-mono font-bold text-white bg-slate-900/80 px-2.5 py-1 rounded-md border border-slate-700">
-                      {detectedLayout === 'wristband-center'
+                      {detectedLayout === 'standard-strip'
+                        ? 'SulfiTrack Standard Strip (Center H₂S Passive Window)'
+                        : detectedLayout === 'wristband-center'
                         ? 'Wristband Casing (Center Aperture Detected)'
-                        : 'Standard Test Strip (Left Reagent Patch Detected)'}
+                        : 'Legacy Strip (Left Reagent Patch)'}
                     </span>
                   </div>
 
@@ -866,7 +870,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
 
                   {/* Floating label */}
                   <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap bg-orange-600 text-white font-mono text-[9px] font-extrabold px-1.5 py-0.5 rounded shadow-sm border border-orange-300">
-                    H₂S CHEMICAL PATCH
+                    {detectedLayout === 'legacy-left' ? 'H₂S REAGENT PATCH (LEFT)' : 'H₂S PASSIVE STRIP (CENTER)'}
                   </div>
                 </div>
 
@@ -907,6 +911,24 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                     </div>
                   </div>
                 )}
+
+                {/* Reticle: Physical Reference Swatches A-E */}
+                {cvResult?.referenceSwatches && cvResult.referenceSwatches.map((swatch) => (
+                  <div
+                    key={swatch.id}
+                    className="absolute border border-white/60 bg-black/20 rounded-xs pointer-events-none z-10 transition-all duration-150 flex items-center justify-center"
+                    style={{
+                      left: `${swatch.roiNormalized.xPct}%`,
+                      top: `${swatch.roiNormalized.yPct}%`,
+                      width: `${swatch.roiNormalized.widthPct}%`,
+                      height: `${swatch.roiNormalized.heightPct}%`
+                    }}
+                  >
+                    <span className="text-[7px] font-mono font-bold text-white bg-slate-950/85 px-0.5 rounded -bottom-3.5 absolute border border-slate-700">
+                      {swatch.label}
+                    </span>
+                  </div>
+                ))}
 
                 {/* Bottom guidance banner */}
                 <div className="absolute bottom-2 inset-x-3 bg-slate-900/85 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700 text-[11px] text-slate-300 flex items-center justify-between z-20 pointer-events-none">
@@ -988,16 +1010,16 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => handleSelectLayout('standard-left')}
+                    onClick={() => handleSelectLayout('standard-strip')}
                     className={`px-2.5 py-1 text-xs font-semibold rounded-lg border cursor-pointer flex items-center gap-1 transition-colors ${
-                      detectedLayout === 'standard-left'
+                      detectedLayout === 'standard-strip'
                         ? 'bg-orange-600 text-white border-orange-600 shadow-xs'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                     }`}
-                    title="Standard strip with patch on the left (e.g. taped strip / paper strip)"
+                    title="SulfiTrack Standard Strip with center H2S passive window"
                   >
-                    <span className="material-symbols-outlined text-[14px]">west</span>
-                    <span>Standard Strip (Left)</span>
+                    <span className="material-symbols-outlined text-[14px]">view_array</span>
+                    <span>Standard Strip (Center)</span>
                   </button>
 
                   <button
@@ -1010,8 +1032,22 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                     }`}
                     title="Wristband holder with center viewing window"
                   >
-                    <span className="material-symbols-outlined text-[14px]">crop_free</span>
+                    <span className="material-symbols-outlined text-[14px]">watch</span>
                     <span>Wristband (Center)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSelectLayout('legacy-left')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg border cursor-pointer flex items-center gap-1 transition-colors ${
+                      detectedLayout === 'legacy-left'
+                        ? 'bg-orange-600 text-white border-orange-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                    title="Legacy strip with patch on the left"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">west</span>
+                    <span>Legacy Strip (Left)</span>
                   </button>
                 </div>
 

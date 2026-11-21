@@ -61,7 +61,7 @@ export interface ScanContextData {
   whiteRefRgb?: { r: number; g: number; b: number };
   normalizedRgb?: { r: number; g: number; b: number };
   roi?: { x: number; y: number; width: number; height: number };
-  detectedLayout?: 'standard-left' | 'wristband-center';
+  detectedLayout?: 'standard-strip' | 'wristband-center' | 'legacy-left' | string;
   badgeId: string;
   workerId: string;
   workerName: string;

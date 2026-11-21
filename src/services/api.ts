@@ -61,6 +61,7 @@ export interface AnalyzeResponse {
     normalizedHex?: string;
     whiteRefRgb?: { r: number; g: number; b: number };
     layout?: string;
+    layoutDescription?: string;
     kineticFactor: number;
     tempCorrection: number;
     humidityCorrection: number;

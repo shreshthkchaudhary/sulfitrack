@@ -21,7 +21,7 @@ analyzeRouter.post('/', async (req: Request, res: Response) => {
       department = 'Hydrocracker Unit (HCU-2)'
     } = req.body;
 
-    let sampleRgb = rgb;
+    let sampleRgb = rgb || req.body.sampledRgb;
 
     // If no RGB provided, default to calibrated baseline or warning level
     if (!sampleRgb || sampleRgb.r === undefined) {

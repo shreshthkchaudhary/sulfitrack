@@ -468,12 +468,12 @@ var BACKUP_FILE = path.join(DATA_DIR, "database.json.bak");
 function getDefaultCalibration() {
   return {
     swatches: [
-      { ppmH: 0, label: "0 PPM\xB7h (Blank)", hexColor: "#f8fafc", rgb: { r: 248, g: 250, b: 252 }, deltaE: 0 },
-      { ppmH: 2, label: "2.0 PPM\xB7h (Low)", hexColor: "#e2e8f0", rgb: { r: 226, g: 232, b: 240 }, deltaE: 0.45 },
-      { ppmH: 5, label: "5.0 PPM\xB7h (Permissible)", hexColor: "#cbd5e1", rgb: { r: 203, g: 213, b: 225 }, deltaE: 1.25 },
-      { ppmH: 10, label: "10.0 PPM\xB7h (Shift Limit)", hexColor: "#d97706", rgb: { r: 217, g: 119, b: 6 }, deltaE: 2.84 },
-      { ppmH: 20, label: "20.0 PPM\xB7h (Severe)", hexColor: "#b45309", rgb: { r: 180, g: 83, b: 9 }, deltaE: 4.12 },
-      { ppmH: 50, label: "50.0 PPM\xB7h (Critical)", hexColor: "#78350f", rgb: { r: 120, g: 53, b: 15 }, deltaE: 6.85 }
+      { ppmH: 0, label: "Swatch A: 0.0 PPM\xB7h (Blank Standard)", hexColor: "#cbaa7e", rgb: { r: 203, g: 170, b: 126 }, deltaE: 0.15 },
+      { ppmH: 2.5, label: "Swatch B: 2.5 PPM\xB7h (Low Reference)", hexColor: "#92701a", rgb: { r: 146, g: 112, b: 26 }, deltaE: 1.15 },
+      { ppmH: 5, label: "Swatch C: 5.0 PPM\xB7h (Permissible Shift)", hexColor: "#a96a38", rgb: { r: 169, g: 106, b: 56 }, deltaE: 2.1 },
+      { ppmH: 10, label: "Swatch D: 10.0 PPM\xB7h (Shift Ceiling)", hexColor: "#3e2222", rgb: { r: 62, g: 34, b: 34 }, deltaE: 3.45 },
+      { ppmH: 12.5, label: "Swatch E: 12.5 PPM\xB7h (Hazardous Indigo)", hexColor: "#222d3f", rgb: { r: 34, g: 45, b: 63 }, deltaE: 3.85 },
+      { ppmH: 20, label: "Saturated: 20.0 PPM\xB7h (Critical Blackout)", hexColor: "#181818", rgb: { r: 24, g: 24, b: 24 }, deltaE: 4.95 }
     ],
     baselineColor: {
       hex: "#f5f3ec",
@@ -954,14 +954,16 @@ function analyzeDosimeter(input) {
   const humidityCorrection = 1 + 3e-3 * (humidityRH - 50);
   const kineticFactor = parseFloat((tempCorrection * humidityCorrection).toFixed(3));
   let baseDose = 0;
-  if (normalizedDeltaE <= 0.4) {
-    baseDose = Math.max(0.2, normalizedDeltaE * 4);
-  } else if (normalizedDeltaE <= 1.5) {
-    baseDose = 1.6 + (normalizedDeltaE - 0.4) * 3;
-  } else if (normalizedDeltaE <= 3) {
-    baseDose = 4.9 + (normalizedDeltaE - 1.5) * 2.85;
+  if (normalizedDeltaE <= 0.25) {
+    baseDose = Math.max(0.1, normalizedDeltaE * 1.5);
+  } else if (normalizedDeltaE <= 0.8) {
+    baseDose = 0.4 + (normalizedDeltaE - 0.25) * 2.8;
+  } else if (normalizedDeltaE <= 1.8) {
+    baseDose = 1.9 + (normalizedDeltaE - 0.8) * 3.2;
+  } else if (normalizedDeltaE <= 3.2) {
+    baseDose = 5.1 + (normalizedDeltaE - 1.8) * 3.5;
   } else {
-    baseDose = 9.17 + (normalizedDeltaE - 3) * 4.2;
+    baseDose = 10 + (normalizedDeltaE - 3.2) * 4.6;
   }
   const exposureValue = parseFloat((baseDose * kineticFactor).toFixed(1));
   let status = "Safe";
@@ -981,7 +983,7 @@ function analyzeDosimeter(input) {
   const deltaFromAmber = Math.abs(normalizedDeltaE - 2.84);
   const confidence = parseFloat((confidenceBase - Math.min(3.5, deltaFromAmber * 0.7) + Math.sin(effectiveR + effectiveG) * 0.4).toFixed(1));
   const shiftTWAPercentage = Math.round(exposureValue / 10 * 100);
-  const layoutDesc = input.layout === "wristband-center" ? "Center Aperture (Wristband Casing)" : "Left Reagent Patch (Standard Test Strip)";
+  const layoutDesc = input.layout === "wristband-center" ? "Center Viewing Aperture (Wristband Casing)" : input.layout === "legacy-left" ? "Legacy Left Patch (Taped Strip)" : "SulfiTrack Standard Strip (Center H\u2082S Reaction Window)";
   const pipelineStages = [
     {
       stage: 1,
@@ -1055,6 +1057,7 @@ function analyzeDosimeter(input) {
     normalizedHex: hexColor,
     whiteRefRgb: input.whiteRefRgb,
     layout: input.layout,
+    layoutDescription: layoutDesc,
     kineticFactor,
     tempCorrection: parseFloat(tempCorrection.toFixed(3)),
     humidityCorrection: parseFloat(humidityCorrection.toFixed(3)),
@@ -1083,7 +1086,7 @@ analyzeRouter.post("/", async (req, res) => {
       workerName = "Rajesh Kumar",
       department = "Hydrocracker Unit (HCU-2)"
     } = req.body;
-    let sampleRgb = rgb;
+    let sampleRgb = rgb || req.body.sampledRgb;
     if (!sampleRgb || sampleRgb.r === void 0) {
       sampleRgb = { r: 217, g: 119, b: 6 };
     }

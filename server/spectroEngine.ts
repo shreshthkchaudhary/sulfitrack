@@ -12,6 +12,7 @@ export interface SpectroAnalysisInput {
   whiteRefRgb?: { r: number; g: number; b: number };
   normalizedRgb?: { r: number; g: number; b: number };
   layout?: string;
+  layoutDescription?: string;
   roi?: { x: number; y: number; width: number; height: number };
   tempC?: number;
   humidityRH?: number;
@@ -39,6 +40,7 @@ export interface SpectroAnalysisResult {
   normalizedHex?: string;
   whiteRefRgb?: { r: number; g: number; b: number };
   layout?: string;
+  layoutDescription?: string;
   kineticFactor: number;
   tempCorrection: number;
   humidityCorrection: number;
@@ -173,17 +175,19 @@ export function analyzeDosimeter(input: SpectroAnalysisInput): SpectroAnalysisRe
   const humidityCorrection = 1.0 + 0.003 * (humidityRH - 50.0);
   const kineticFactor = parseFloat((tempCorrection * humidityCorrection).toFixed(3));
 
-  // Dose calculation:
+  // Dose calculation calibrated to physical SulfiTrack dosimeter test strips:
   let baseDose = 0;
-  if (normalizedDeltaE <= 0.4) {
-    baseDose = Math.max(0.2, normalizedDeltaE * 4.0);
-  } else if (normalizedDeltaE <= 1.5) {
-    baseDose = 1.6 + (normalizedDeltaE - 0.4) * 3.0;
-  } else if (normalizedDeltaE <= 3.0) {
-    baseDose = 4.9 + (normalizedDeltaE - 1.5) * 2.85;
+  if (normalizedDeltaE <= 0.25) {
+    baseDose = Math.max(0.1, normalizedDeltaE * 1.5);
+  } else if (normalizedDeltaE <= 0.8) {
+    baseDose = 0.4 + (normalizedDeltaE - 0.25) * 2.8;
+  } else if (normalizedDeltaE <= 1.8) {
+    baseDose = 1.9 + (normalizedDeltaE - 0.8) * 3.2;
+  } else if (normalizedDeltaE <= 3.2) {
+    baseDose = 5.1 + (normalizedDeltaE - 1.8) * 3.5;
   } else {
-    // Critical darkening > 3.0
-    baseDose = 9.17 + (normalizedDeltaE - 3.0) * 4.2;
+    // Saturated darkening / heavy sulfide formation
+    baseDose = 10.0 + (normalizedDeltaE - 3.2) * 4.6;
   }
 
   // Adjust for micro-climate kinetics
@@ -215,9 +219,12 @@ export function analyzeDosimeter(input: SpectroAnalysisInput): SpectroAnalysisRe
 
   const shiftTWAPercentage = Math.round((exposureValue / 10.0) * 100);
 
-  const layoutDesc = input.layout === 'wristband-center'
-    ? 'Center Aperture (Wristband Casing)'
-    : 'Left Reagent Patch (Standard Test Strip)';
+  const layoutDesc =
+    input.layout === 'wristband-center'
+      ? 'Center Viewing Aperture (Wristband Casing)'
+      : input.layout === 'legacy-left'
+      ? 'Legacy Left Patch (Taped Strip)'
+      : 'SulfiTrack Standard Strip (Center H₂S Reaction Window)';
 
   const pipelineStages = [
     {
@@ -295,6 +302,7 @@ export function analyzeDosimeter(input: SpectroAnalysisInput): SpectroAnalysisRe
     normalizedHex: hexColor,
     whiteRefRgb: input.whiteRefRgb,
     layout: input.layout,
+    layoutDescription: layoutDesc,
     kineticFactor,
     tempCorrection: parseFloat(tempCorrection.toFixed(3)),
     humidityCorrection: parseFloat(humidityCorrection.toFixed(3)),

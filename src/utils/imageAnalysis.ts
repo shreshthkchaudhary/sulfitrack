@@ -40,6 +40,18 @@ export interface DecodedQRInfo {
   location?: NormalizedROI;
 }
 
+export type DosimeterLayout = 'standard-strip' | 'wristband-center' | 'legacy-left';
+
+export interface ReferenceSwatch {
+  label: string;
+  ppmH: number;
+  hex: string;
+  rgb: RGB;
+  normalizedHex: string;
+  normalizedRgb: RGB;
+  roiNormalized: NormalizedROI;
+}
+
 export interface DosimeterCVResult {
   cardBounds: {
     minX: number;
@@ -49,12 +61,19 @@ export interface DosimeterCVResult {
     width: number;
     height: number;
   };
-  layout: 'standard-left' | 'wristband-center';
+  layout: DosimeterLayout;
   layoutLabel: string;
   patchRoi: ROI;
   patchRoiNormalized: NormalizedROI;
   whiteRefRoi: ROI;
   whiteRefRoiNormalized: NormalizedROI;
+  referenceSwatches?: {
+    A: ReferenceSwatch;
+    B: ReferenceSwatch;
+    C: ReferenceSwatch;
+    D: ReferenceSwatch;
+    E: ReferenceSwatch;
+  };
   sampledRgb: RGB;
   sampledHex: string;
   whiteRefRgb: RGB;
@@ -218,14 +237,18 @@ export function quickEstimateExposure(
   const kineticFactor = (1.0 + 0.012 * (tempC - 25.0)) * (1.0 + 0.003 * (humidityRH - 50.0));
 
   let baseDose = 0;
-  if (normDeltaE <= 0.4) {
-    baseDose = Math.max(0.2, normDeltaE * 4.0);
-  } else if (normDeltaE <= 1.5) {
-    baseDose = 1.6 + (normDeltaE - 0.4) * 3.0;
-  } else if (normDeltaE <= 3.0) {
-    baseDose = 4.9 + (normDeltaE - 1.5) * 2.85;
+  if (normDeltaE <= 0.25) {
+    // Pristine unexposed white baseline
+    baseDose = Math.max(0.1, normDeltaE * 1.5);
+  } else if (normDeltaE <= 0.8) {
+    baseDose = 0.4 + (normDeltaE - 0.25) * 2.8;
+  } else if (normDeltaE <= 1.8) {
+    baseDose = 1.9 + (normDeltaE - 0.8) * 3.2;
+  } else if (normDeltaE <= 3.2) {
+    baseDose = 5.1 + (normDeltaE - 1.8) * 3.5;
   } else {
-    baseDose = 9.17 + (normDeltaE - 3.0) * 4.2;
+    // Saturated chemical darkening or Swatch E/Black
+    baseDose = 10.0 + (normDeltaE - 3.2) * 4.6;
   }
 
   const dose = parseFloat((baseDose * kineticFactor).toFixed(1));
@@ -242,31 +265,31 @@ export function quickEstimateExposure(
  */
 export function detectDosimeterPatch(
   canvas: HTMLCanvasElement,
-  userOverrideLayout?: 'standard-left' | 'wristband-center'
+  userOverrideLayout?: DosimeterLayout
 ): DosimeterCVResult {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const w = canvas.width;
   const h = canvas.height;
 
   if (!ctx || w === 0 || h === 0) {
-    const fallbackRgb = { r: 217, g: 119, b: 6 };
+    const fallbackRgb = { r: 245, g: 243, b: 236 };
     return {
       cardBounds: { minX: 0, maxX: w, minY: 0, maxY: h, width: w, height: h },
-      layout: 'standard-left',
-      layoutLabel: 'Standard Strip (Left Patch)',
-      patchRoi: { x: w * 0.15, y: h * 0.4, width: w * 0.15, height: h * 0.25 },
-      patchRoiNormalized: { xPct: 15, yPct: 40, widthPct: 15, heightPct: 25 },
-      whiteRefRoi: { x: w * 0.7, y: h * 0.4, width: w * 0.1, height: h * 0.15 },
-      whiteRefRoiNormalized: { xPct: 70, yPct: 40, widthPct: 10, heightPct: 15 },
+      layout: 'standard-strip',
+      layoutLabel: 'SulfiTrack Standard Strip (Center H₂S Reaction Window)',
+      patchRoi: { x: w * 0.34, y: h * 0.35, width: w * 0.34, height: h * 0.35 },
+      patchRoiNormalized: { xPct: 34, yPct: 35, widthPct: 34, heightPct: 35 },
+      whiteRefRoi: { x: w * 0.16, y: h * 0.16, width: w * 0.09, height: h * 0.10 },
+      whiteRefRoiNormalized: { xPct: 16, yPct: 16, widthPct: 9, heightPct: 10 },
       sampledRgb: fallbackRgb,
       sampledHex: rgbToHex(fallbackRgb.r, fallbackRgb.g, fallbackRgb.b),
       whiteRefRgb: { r: 245, g: 243, b: 236 },
       whiteRefHex: '#f5f3ec',
       normalizedRgb: fallbackRgb,
       normalizedHex: rgbToHex(fallbackRgb.r, fallbackRgb.g, fallbackRgb.b),
-      estimatedExposure: 10.2,
-      status: 'Warning',
-      deltaE: 2.84
+      estimatedExposure: 0.2,
+      status: 'Safe',
+      deltaE: 0.15
     };
   }
 
@@ -342,63 +365,80 @@ export function detectDosimeterPatch(
     cardW = w;
   }
 
-  // 3. Layout Detection: Standard Strip (Left Window) vs Wristband Casing (Center Window)
-  let layout: 'standard-left' | 'wristband-center' = userOverrideLayout || 'standard-left';
+  // 3. Layout Detection: Official SulfiTrack Standard Strip is primary
+  let layout: DosimeterLayout = userOverrideLayout || 'standard-strip';
 
   if (!userOverrideLayout) {
-    // Check if Swatch B (olive green/yellow) is present at ~25% of card width (as in wristband casing Image 1)
-    const swatchB_X = minX + cardW * 0.25;
-    const swatchB_Y = minY + cardH * 0.40;
-    const swatchB_Color = sampleAreaRGB(ctx, swatchB_X, swatchB_Y, cardW * 0.04, cardH * 0.10, w, h);
-
-    // If point at 25% has strong yellow/olive/tan character (R > B + 30 and G > B + 15)
-    // while center has high luminance paper window, it is the center aperture wristband layout.
-    if (swatchB_Color.r > swatchB_Color.b + 32 && swatchB_Color.g > swatchB_Color.b + 18) {
+    // Check if the image has thick dark wristband bezel at the very top/bottom
+    const topOuter = sampleAreaRGB(ctx, w * 0.5, Math.max(2, minY * 0.4), 25, 10, w, h);
+    if (topOuter.r < 40 && topOuter.g < 40 && topOuter.b < 40 && minY > h * 0.15) {
       layout = 'wristband-center';
     } else {
-      layout = 'standard-left';
+      layout = 'standard-strip';
     }
   }
 
   // 4. Position active chemical patch and white reference ROIs
   let patchRoi: ROI;
-  if (layout === 'wristband-center') {
-    patchRoi = {
-      x: Math.round(minX + cardW * 0.44),
-      y: Math.round(minY + cardH * 0.33),
-      width: Math.round(cardW * 0.18),
-      height: Math.round(cardH * 0.22)
-    };
-  } else {
-    // Standard strip: active chemical strip on the left (matches Image 2 & Image 3)
+  let whiteRefRoi: ROI;
+  let layoutLabel = 'SulfiTrack Standard Strip (Center H₂S Reaction Window)';
+
+  if (layout === 'legacy-left') {
+    layoutLabel = 'Legacy Prototype Strip (Left Reagent Patch)';
     patchRoi = {
       x: Math.round(minX + cardW * 0.08),
       y: Math.round(minY + cardH * 0.33),
       width: Math.round(cardW * 0.18),
       height: Math.round(cardH * 0.28)
     };
+    whiteRefRoi = {
+      x: Math.round(minX + cardW * 0.68),
+      y: Math.round(minY + cardH * 0.36),
+      width: Math.round(cardW * 0.09),
+      height: Math.round(cardH * 0.16)
+    };
+  } else if (layout === 'wristband-center') {
+    layoutLabel = 'Wristband Enclosure (Center Viewing Aperture)';
+    patchRoi = {
+      x: Math.round(minX + cardW * 0.39),
+      y: Math.round(minY + cardH * 0.33),
+      width: Math.round(cardW * 0.23),
+      height: Math.round(cardH * 0.26)
+    };
+    whiteRefRoi = {
+      x: Math.round(minX + cardW * 0.18),
+      y: Math.round(minY + cardH * 0.20),
+      width: Math.round(cardW * 0.10),
+      height: Math.round(cardH * 0.12)
+    };
+  } else {
+    // Official SulfiTrack Standard Strip (Exact geometry from hardware production strips)
+    layoutLabel = 'SulfiTrack Standard Strip (Center H₂S Reaction Window)';
+    patchRoi = {
+      x: Math.round(minX + cardW * 0.34),
+      y: Math.round(minY + cardH * 0.35),
+      width: Math.round(cardW * 0.34),
+      height: Math.round(cardH * 0.35)
+    };
+    whiteRefRoi = {
+      x: Math.round(minX + cardW * 0.16),
+      y: Math.round(minY + cardH * 0.16),
+      width: Math.round(cardW * 0.09),
+      height: Math.round(cardH * 0.09)
+    };
   }
-
-  // White balance reference ROI: located on the blank white card area
-  const whiteRefRoi: ROI = {
-    x: Math.round(minX + cardW * 0.68),
-    y: Math.round(minY + cardH * 0.36),
-    width: Math.round(cardW * 0.09),
-    height: Math.round(cardH * 0.16)
-  };
 
   // 5. Extract sampled colors with area averaging
   const sampledRgb = sampleAreaRGB(ctx, patchRoi.x, patchRoi.y, patchRoi.width, patchRoi.height, w, h);
   let whiteRefRgb = sampleAreaRGB(ctx, whiteRefRoi.x, whiteRefRoi.y, whiteRefRoi.width, whiteRefRoi.height, w, h);
 
-  // If white reference sampled too dark (e.g. accidentally hit text or border), fallback to top header card area
+  // If white reference sampled too dark (e.g. hit text or shadow), fallback to upper card background
   if (whiteRefRgb.r < 90 || whiteRefRgb.g < 90 || whiteRefRgb.b < 90) {
-    whiteRefRgb = sampleAreaRGB(ctx, minX + cardW * 0.5, minY + cardH * 0.15, cardW * 0.15, cardH * 0.1, w, h);
+    whiteRefRgb = sampleAreaRGB(ctx, minX + cardW * 0.5, minY + cardH * 0.12, cardW * 0.15, cardH * 0.08, w, h);
   }
 
   // 6. Compute in-situ D65 normalized RGB
   const normalizedRgb = normalizeWithWhiteRef(sampledRgb, whiteRefRgb);
-
   const sampledHex = rgbToHex(sampledRgb.r, sampledRgb.g, sampledRgb.b);
   const whiteRefHex = rgbToHex(whiteRefRgb.r, whiteRefRgb.g, whiteRefRgb.b);
   const normalizedHex = rgbToHex(normalizedRgb.r, normalizedRgb.g, normalizedRgb.b);
@@ -406,13 +446,45 @@ export function detectDosimeterPatch(
   // 7. Calculate estimated dosage
   const { dose, status, deltaE } = quickEstimateExposure(normalizedRgb);
 
-  // 8. Auto-Scan QR Badge if visible on canvas
+  // 8. Sample the 5 Physical Reference Swatches (A, B, C, D, E) for internal validation
+  const sampleSwatch = (xPct: number, yPct: number, wPct: number, hPct: number, label: string, ppmH: number): ReferenceSwatch => {
+    const sx = Math.round(minX + cardW * xPct);
+    const sy = Math.round(minY + cardH * yPct);
+    const sw = Math.round(cardW * wPct);
+    const sh = Math.round(cardH * hPct);
+    const raw = sampleAreaRGB(ctx, sx, sy, sw, sh, w, h);
+    const norm = normalizeWithWhiteRef(raw, whiteRefRgb);
+    return {
+      label,
+      ppmH,
+      rgb: raw,
+      hex: rgbToHex(raw.r, raw.g, raw.b),
+      normalizedRgb: norm,
+      normalizedHex: rgbToHex(norm.r, norm.g, norm.b),
+      roiNormalized: {
+        xPct: parseFloat(((sx / w) * 100).toFixed(1)),
+        yPct: parseFloat(((sy / h) * 100).toFixed(1)),
+        widthPct: parseFloat(((sw / w) * 100).toFixed(1)),
+        heightPct: parseFloat(((sh / h) * 100).toFixed(1))
+      }
+    };
+  };
+
+  const referenceSwatches = {
+    A: sampleSwatch(0.085, 0.46, 0.045, 0.11, 'Swatch A: Blank Standard (0 PPM·h)', 0.0),
+    B: sampleSwatch(0.150, 0.46, 0.045, 0.11, 'Swatch B: Low Exposure (2.5 PPM·h)', 2.5),
+    C: sampleSwatch(0.215, 0.46, 0.045, 0.11, 'Swatch C: Shift Permissible (5.0 PPM·h)', 5.0),
+    D: sampleSwatch(0.715, 0.46, 0.045, 0.11, 'Swatch D: Shift Ceiling (10.0 PPM·h)', 10.0),
+    E: sampleSwatch(0.780, 0.46, 0.045, 0.11, 'Swatch E: Hazardous Saturated (12.5 PPM·h)', 12.5)
+  };
+
+  // 9. Auto-Scan QR Badge if visible on canvas
   const qrInfo = scanDosimeterQRSync(canvas);
 
   return {
     cardBounds: { minX, maxX, minY, maxY, width: cardW, height: cardH },
     layout,
-    layoutLabel: layout === 'wristband-center' ? 'Wristband Casing (Center Aperture)' : 'Standard Strip (Left Reagent Patch)',
+    layoutLabel,
     patchRoi,
     patchRoiNormalized: {
       xPct: parseFloat(((patchRoi.x / w) * 100).toFixed(1)),
@@ -427,6 +499,7 @@ export function detectDosimeterPatch(
       widthPct: parseFloat(((whiteRefRoi.width / w) * 100).toFixed(1)),
       heightPct: parseFloat(((whiteRefRoi.height / h) * 100).toFixed(1))
     },
+    referenceSwatches,
     sampledRgb,
     sampledHex,
     whiteRefRgb,

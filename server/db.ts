@@ -71,12 +71,12 @@ const BACKUP_FILE = path.join(DATA_DIR, 'database.json.bak');
 function getDefaultCalibration(): CalibrationData {
   return {
     swatches: [
-      { ppmH: 0.0, label: '0 PPM·h (Blank)', hexColor: '#f8fafc', rgb: { r: 248, g: 250, b: 252 }, deltaE: 0.0 },
-      { ppmH: 2.0, label: '2.0 PPM·h (Low)', hexColor: '#e2e8f0', rgb: { r: 226, g: 232, b: 240 }, deltaE: 0.45 },
-      { ppmH: 5.0, label: '5.0 PPM·h (Permissible)', hexColor: '#cbd5e1', rgb: { r: 203, g: 213, b: 225 }, deltaE: 1.25 },
-      { ppmH: 10.0, label: '10.0 PPM·h (Shift Limit)', hexColor: '#d97706', rgb: { r: 217, g: 119, b: 6 }, deltaE: 2.84 },
-      { ppmH: 20.0, label: '20.0 PPM·h (Severe)', hexColor: '#b45309', rgb: { r: 180, g: 83, b: 9 }, deltaE: 4.12 },
-      { ppmH: 50.0, label: '50.0 PPM·h (Critical)', hexColor: '#78350f', rgb: { r: 120, g: 53, b: 15 }, deltaE: 6.85 }
+      { ppmH: 0.0, label: 'Swatch A: 0.0 PPM·h (Blank Standard)', hexColor: '#cbaa7e', rgb: { r: 203, g: 170, b: 126 }, deltaE: 0.15 },
+      { ppmH: 2.5, label: 'Swatch B: 2.5 PPM·h (Low Reference)', hexColor: '#92701a', rgb: { r: 146, g: 112, b: 26 }, deltaE: 1.15 },
+      { ppmH: 5.0, label: 'Swatch C: 5.0 PPM·h (Permissible Shift)', hexColor: '#a96a38', rgb: { r: 169, g: 106, b: 56 }, deltaE: 2.10 },
+      { ppmH: 10.0, label: 'Swatch D: 10.0 PPM·h (Shift Ceiling)', hexColor: '#3e2222', rgb: { r: 62, g: 34, b: 34 }, deltaE: 3.45 },
+      { ppmH: 12.5, label: 'Swatch E: 12.5 PPM·h (Hazardous Indigo)', hexColor: '#222d3f', rgb: { r: 34, g: 45, b: 63 }, deltaE: 3.85 },
+      { ppmH: 20.0, label: 'Saturated: 20.0 PPM·h (Critical Blackout)', hexColor: '#181818', rgb: { r: 24, g: 24, b: 24 }, deltaE: 4.95 }
     ],
     baselineColor: {
       hex: '#f5f3ec',
