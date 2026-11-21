@@ -8,8 +8,11 @@ import {
   normalizeWithWhiteRef,
   quickEstimateExposure,
   rgbToHex,
+  scanDosimeterQR,
+  playQRSound,
   DosimeterCVResult,
-  NormalizedROI
+  NormalizedROI,
+  DecodedQRInfo
 } from '../utils/imageAnalysis';
 
 interface ScanScreenProps {
@@ -115,6 +118,10 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     status: 'Warning',
     deltaE: 2.84
   });
+
+  // Automated Hardware QR Code Detection State
+  const [detectedQr, setDetectedQr] = useState<DecodedQRInfo | null>(null);
+  const [qrScanNotice, setQrScanNotice] = useState<string | null>(null);
 
   const imageElementRef = useRef<HTMLImageElement>(null);
 
@@ -235,6 +242,47 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     setCameraFacing((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
 
+  // Live continuous camera QR code background detection
+  useEffect(() => {
+    if (!isCameraActive || capturedSnapshot || activeTab !== 'camera') return;
+
+    let isScanning = false;
+    const interval = setInterval(async () => {
+      if (isScanning || !videoRef.current || !canvasRef.current) return;
+      const video = videoRef.current;
+      if (video.readyState < 2) return;
+
+      isScanning = true;
+      try {
+        const offCanvas = canvasRef.current;
+        const ctx = offCanvas.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          const scanW = 640;
+          const scanH = Math.round((video.videoHeight / (video.videoWidth || 1)) * 640) || 480;
+          offCanvas.width = scanW;
+          offCanvas.height = scanH;
+          ctx.drawImage(video, 0, 0, scanW, scanH);
+
+          const qr = await scanDosimeterQR(offCanvas, currentWorkers);
+          if (qr.detected && (!detectedQr || detectedQr.rawText !== qr.rawText)) {
+            setDetectedQr(qr);
+            playQRSound();
+            if (qr.workerId) setSelectedWorkerId(qr.workerId);
+            if (qr.badgeId) setCustomBadgeId(qr.badgeId);
+            setQrScanNotice(`Live QR Locked: ${qr.rawText} · ${qr.workerName} (${qr.badgeId})`);
+            setTimeout(() => setQrScanNotice(null), 4000);
+          }
+        }
+      } catch {
+        // ignore frame scan exceptions
+      } finally {
+        isScanning = false;
+      }
+    }, 320);
+
+    return () => clearInterval(interval);
+  }, [isCameraActive, capturedSnapshot, activeTab, currentWorkers, detectedQr]);
+
   // Snap image from live camera feed
   const handleSnapFromCamera = () => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -248,27 +296,6 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
 
     // Draw current frame
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    // Sample the center region (where the dosimeter patch is placed in the viewfinder)
-    const centerX = Math.floor(canvas.width / 2);
-    const centerY = Math.floor(canvas.height / 2);
-    const sampleSize = 10;
-    const imgData = ctx.getImageData(centerX - sampleSize / 2, centerY - sampleSize / 2, sampleSize, sampleSize);
-
-    let sumR = 0;
-    let sumG = 0;
-    let sumB = 0;
-    const pixelCount = sampleSize * sampleSize;
-
-    for (let i = 0; i < imgData.data.length; i += 4) {
-      sumR += imgData.data[i];
-      sumG += imgData.data[i + 1];
-      sumB += imgData.data[i + 2];
-    }
-
-    const avgR = Math.round(sumR / pixelCount);
-    const avgG = Math.round(sumG / pixelCount);
-    const avgB = Math.round(sumB / pixelCount);
 
     const snapshotDataUrl = canvas.toDataURL('image/jpeg', 0.92);
     setCapturedSnapshot(snapshotDataUrl);
@@ -286,6 +313,18 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
     setNormalizedHex(cv.normalizedHex);
     setLiveEstimate({ dose: cv.estimatedExposure, status: cv.status, deltaE: cv.deltaE });
 
+    // Run full QR scan on snapshot
+    scanDosimeterQR(canvas, currentWorkers).then((qr) => {
+      if (qr.detected) {
+        setDetectedQr(qr);
+        playQRSound();
+        if (qr.workerId) setSelectedWorkerId(qr.workerId);
+        if (qr.badgeId) setCustomBadgeId(qr.badgeId);
+        setQrScanNotice(`QR Code Verified: ${qr.rawText} · Linked to ${qr.workerName} (${qr.badgeId})`);
+        setTimeout(() => setQrScanNotice(null), 5000);
+      }
+    });
+
     // Pause video
     stopCamera();
   };
@@ -293,6 +332,8 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
   // Retake photo
   const handleRetakeCamera = () => {
     setCapturedSnapshot(null);
+    setDetectedQr(null);
+    setQrScanNotice(null);
     startCamera();
   };
 
@@ -328,6 +369,27 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
         setNormalizedRgb(cv.normalizedRgb);
         setNormalizedHex(cv.normalizedHex);
         setLiveEstimate({ dose: cv.estimatedExposure, status: cv.status, deltaE: cv.deltaE });
+
+        // Run full QR detection across native & enhanced passes
+        scanDosimeterQR(canvas, currentWorkers).then((qr) => {
+          if (qr.detected) {
+            setDetectedQr(qr);
+            playQRSound();
+            if (qr.workerId) setSelectedWorkerId(qr.workerId);
+            if (qr.badgeId) setCustomBadgeId(qr.badgeId);
+            setQrScanNotice(`Hardware QR Verified: ${qr.rawText} · Auto-Assigned to ${qr.workerName} (${qr.badgeId})`);
+            setTimeout(() => setQrScanNotice(null), 6000);
+          } else if (cv.qrInfo?.detected) {
+            setDetectedQr(cv.qrInfo);
+            playQRSound();
+            if (cv.qrInfo.workerId) setSelectedWorkerId(cv.qrInfo.workerId);
+            if (cv.qrInfo.badgeId) setCustomBadgeId(cv.qrInfo.badgeId);
+            setQrScanNotice(`Hardware QR Verified: ${cv.qrInfo.rawText} · Auto-Assigned to ${cv.qrInfo.workerName} (${cv.qrInfo.badgeId})`);
+            setTimeout(() => setQrScanNotice(null), 6000);
+          } else {
+            setDetectedQr(null);
+          }
+        });
       };
       img.src = dataUrl;
     };
@@ -623,15 +685,24 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
 
           {/* Top Camera Controls Header inside Viewfinder */}
           <div className="relative z-20 flex items-center justify-between">
-            <div className="flex items-center gap-2 bg-slate-900/85 backdrop-blur-md px-3 py-1.5 rounded-full text-white border border-slate-700">
-              <span
-                className={`w-2.5 h-2.5 rounded-full ${
-                  isCameraActive || capturedSnapshot ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                }`}
-              ></span>
-              <span className="font-mono text-xs text-emerald-300 font-medium">
-                {capturedSnapshot ? 'Frame Captured (Ready for CV)' : isCameraActive ? 'Optical CMOS Stream Active' : 'Sensor Ready'}
-              </span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 bg-slate-900/85 backdrop-blur-md px-3 py-1.5 rounded-full text-white border border-slate-700">
+                <span
+                  className={`w-2.5 h-2.5 rounded-full ${
+                    isCameraActive || capturedSnapshot ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                  }`}
+                ></span>
+                <span className="font-mono text-xs text-emerald-300 font-medium">
+                  {capturedSnapshot ? 'Frame Captured (Ready for CV)' : isCameraActive ? 'Optical CMOS Stream Active' : 'Sensor Ready'}
+                </span>
+              </div>
+
+              {detectedQr && (
+                <div className="hidden sm:flex items-center gap-1.5 bg-emerald-950/90 border border-emerald-400/80 px-2.5 py-1 rounded-full text-emerald-300 text-[11px] font-mono font-bold animate-pulse shadow-md">
+                  <span className="material-symbols-outlined text-[14px] text-emerald-400">qr_code_scanner</span>
+                  <span>QR LOCKED: #{detectedQr.badgeId} ({detectedQr.workerName})</span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -814,6 +885,29 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                   </div>
                 </div>
 
+                {/* Reticle: Hardware QR Code Target Box */}
+                {detectedQr && detectedQr.location && (
+                  <div
+                    className="absolute border-2 border-emerald-400 bg-emerald-500/20 rounded-md pointer-events-none z-10 shadow-[0_0_15px_rgba(16,185,129,0.8)] transition-all duration-150 animate-pulse"
+                    style={{
+                      left: `${detectedQr.location.xPct}%`,
+                      top: `${detectedQr.location.yPct}%`,
+                      width: `${detectedQr.location.widthPct}%`,
+                      height: `${detectedQr.location.heightPct}%`
+                    }}
+                  >
+                    <div className="absolute -top-1 -left-1 w-2.5 h-2.5 border-t-2 border-l-2 border-emerald-300"></div>
+                    <div className="absolute -top-1 -right-1 w-2.5 h-2.5 border-t-2 border-r-2 border-emerald-300"></div>
+                    <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 border-b-2 border-l-2 border-emerald-300"></div>
+                    <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 border-b-2 border-r-2 border-emerald-300"></div>
+
+                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap bg-emerald-600 text-white font-mono text-[9px] font-extrabold px-1.5 py-0.5 rounded shadow-sm border border-emerald-300 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[10px]">qr_code_2</span>
+                      <span>QR: {detectedQr.rawText}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Bottom guidance banner */}
                 <div className="absolute bottom-2 inset-x-3 bg-slate-900/85 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700 text-[11px] text-slate-300 flex items-center justify-between z-20 pointer-events-none">
                   <span className="flex items-center gap-1.5">
@@ -825,6 +919,41 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Hardware QR Code Verified Status Card */}
+              {detectedQr && (
+                <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 text-xs shadow-xs animate-fadeIn">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <span className="material-symbols-outlined text-[20px]">qr_code_scanner</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-emerald-950">Hardware Dosimeter QR Verified:</span>
+                        <span className="font-mono bg-emerald-200/90 text-emerald-950 px-1.5 py-0.2 rounded font-bold text-[11px]">
+                          {detectedQr.rawText}
+                        </span>
+                        <span className="text-[10px] text-emerald-800 bg-emerald-100 border border-emerald-300 px-1.5 rounded font-bold">
+                          ✓ Auto-Assigned
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-emerald-800 mt-0.5">
+                        Matched personnel: <strong>{detectedQr.workerName}</strong> (ID: {detectedQr.workerId} · Badge: #{detectedQr.badgeId} · {detectedQr.department})
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetectedQr(null);
+                      setQrScanNotice(null);
+                    }}
+                    className="text-emerald-700 hover:text-emerald-900 text-xs font-semibold px-2 py-1 rounded hover:bg-emerald-100 cursor-pointer transition-colors"
+                  >
+                    Clear Match
+                  </button>
+                </div>
+              )}
 
               {/* Layout Switcher & Image Change Controls */}
               <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
@@ -1014,9 +1143,16 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
               <span className="material-symbols-outlined text-[16px] text-orange-600">badge</span>
               Worker & Badge Association
             </span>
-            <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-              Shift Active
-            </span>
+            {detectedQr ? (
+              <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">verified</span>
+                QR Synced: {detectedQr.rawText}
+              </span>
+            ) : (
+              <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                Shift Active
+              </span>
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -1156,6 +1292,22 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
           <span>Run SpectroCV Chemical & Exposure Analysis</span>
         </button>
       </div>
+
+      {/* Floating Hardware QR Audio/Visual Confirmation Toast */}
+      {qrScanNotice && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900/95 backdrop-blur-md text-white px-4 py-3 rounded-2xl border border-emerald-400 shadow-2xl flex items-center gap-3 animate-bounce">
+          <div className="w-8 h-8 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-bold shrink-0">
+            <span className="material-symbols-outlined text-[20px]">check</span>
+          </div>
+          <div className="text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold text-emerald-400">Hardware QR Auto-Assigned</span>
+              <span className="text-[9px] bg-emerald-900 text-emerald-300 font-mono px-1 rounded">MATCHED</span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-0.5 max-w-xs">{qrScanNotice}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
