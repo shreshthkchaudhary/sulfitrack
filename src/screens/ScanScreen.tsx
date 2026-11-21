@@ -360,14 +360,21 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
       const img = new Image();
       img.onload = () => {
         try {
-          if (!canvasRef.current) return;
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return;
-
+          // Create isolated processing canvas
+          const canvas = document.createElement('canvas');
           canvas.width = img.width;
           canvas.height = img.height;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return;
           ctx.drawImage(img, 0, 0);
+
+          // Also update ref canvas if mounted
+          if (canvasRef.current) {
+            canvasRef.current.width = img.width;
+            canvasRef.current.height = img.height;
+            const refCtx = canvasRef.current.getContext('2d', { willReadFrequently: true });
+            refCtx?.drawImage(img, 0, 0);
+          }
 
           // Run smart computer-vision detection
           const cv = detectDosimeterPatch(canvas);
@@ -1171,69 +1178,94 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({
               </div>
 
               {/* Live Colorimetry & Estimated Exposure Diagnostic Card */}
-              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* Sampled Sensor Color */}
-                <div className="flex items-center gap-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
-                  <div
-                    className="w-10 h-10 rounded-lg border border-slate-300 shadow-xs shrink-0"
-                    style={{ backgroundColor: sampledHex }}
-                  />
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-[11px] font-bold text-slate-700">Raw Sensor Color</span>
-                    <span className="font-mono text-xs font-bold text-slate-900">{sampledHex.toUpperCase()}</span>
-                    <span className="font-mono text-[10px] text-slate-500">
-                      R:{sampledRgb.r} G:{sampledRgb.g} B:{sampledRgb.b}
-                    </span>
-                  </div>
-                </div>
-
-                {/* D65 In-Situ Calibrated Color */}
-                <div className="flex items-center gap-3 p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-200">
-                  <div
-                    className="w-10 h-10 rounded-lg border border-emerald-300 shadow-xs shrink-0"
-                    style={{ backgroundColor: normalizedHex }}
-                  />
-                  <div className="flex flex-col min-w-0">
-                    <div className="flex items-center gap-1">
-                      <span className="text-[11px] font-bold text-slate-700">D65 Normalized</span>
-                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1 rounded">D65</span>
+              {validationError ? (
+                <div className="bg-red-50 p-3.5 rounded-xl border-2 border-red-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <span className="material-symbols-outlined text-[24px]">block</span>
                     </div>
-                    <span className="font-mono text-xs font-bold text-slate-900">{normalizedHex.toUpperCase()}</span>
-                    <span className="font-mono text-[10px] text-slate-500">
-                      ΔE: {liveEstimate.deltaE.toFixed(2)}
-                    </span>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black text-red-950 uppercase tracking-wide">Image Validation Status</span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-600 text-white tracking-wider">
+                          REJECTED · NON-DOSIMETER
+                        </span>
+                      </div>
+                      <p className="text-xs text-red-800 font-medium mt-0.5">
+                        {validationError}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-left sm:text-right sm:border-l sm:border-red-200 sm:pl-4 shrink-0">
+                    <span className="text-[10px] uppercase font-bold text-red-600 block">SpectroCV Exposure</span>
+                    <span className="font-mono text-base font-black text-red-900">BLOCKED (N/A)</span>
                   </div>
                 </div>
-
-                {/* Live Projected Exposure */}
-                <div
-                  className={`flex items-center justify-between p-2.5 rounded-lg border ${
-                    liveEstimate.status === 'Critical'
-                      ? 'bg-red-50 border-red-200 text-red-900'
-                      : liveEstimate.status === 'Warning'
-                      ? 'bg-amber-50 border-amber-200 text-amber-900'
-                      : 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  }`}
-                >
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-600">
-                      Projected Exposure
-                    </span>
-                    <span className="font-mono text-lg font-black">{liveEstimate.dose.toFixed(1)} PPM·h</span>
+              ) : (
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Sampled Sensor Color */}
+                  <div className="flex items-center gap-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                    <div
+                      className="w-10 h-10 rounded-lg border border-slate-300 shadow-xs shrink-0"
+                      style={{ backgroundColor: sampledHex }}
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[11px] font-bold text-slate-700">Raw Sensor Color</span>
+                      <span className="font-mono text-xs font-bold text-slate-900">{sampledHex.toUpperCase()}</span>
+                      <span className="font-mono text-[10px] text-slate-500">
+                        R:{sampledRgb.r} G:{sampledRgb.g} B:{sampledRgb.b}
+                      </span>
+                    </div>
                   </div>
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase border ${
+
+                  {/* D65 In-Situ Calibrated Color */}
+                  <div className="flex items-center gap-3 p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-200">
+                    <div
+                      className="w-10 h-10 rounded-lg border border-emerald-300 shadow-xs shrink-0"
+                      style={{ backgroundColor: normalizedHex }}
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] font-bold text-slate-700">D65 Normalized</span>
+                        <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1 rounded">D65</span>
+                      </div>
+                      <span className="font-mono text-xs font-bold text-slate-900">{normalizedHex.toUpperCase()}</span>
+                      <span className="font-mono text-[10px] text-slate-500">
+                        ΔE: {liveEstimate.deltaE.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Live Projected Exposure */}
+                  <div
+                    className={`flex items-center justify-between p-2.5 rounded-lg border ${
                       liveEstimate.status === 'Critical'
-                        ? 'bg-red-600 text-white border-red-700'
+                        ? 'bg-red-50 border-red-200 text-red-900'
                         : liveEstimate.status === 'Warning'
-                        ? 'bg-amber-500 text-slate-950 border-amber-600'
-                        : 'bg-emerald-600 text-white border-emerald-700'
+                        ? 'bg-amber-50 border-amber-200 text-amber-900'
+                        : 'bg-emerald-50 border-emerald-200 text-emerald-900'
                     }`}
                   >
-                    {liveEstimate.status}
-                  </span>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-slate-600">
+                        Projected Exposure
+                      </span>
+                      <span className="font-mono text-lg font-black">{liveEstimate.dose.toFixed(1)} PPM·h</span>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase border ${
+                        liveEstimate.status === 'Critical'
+                          ? 'bg-red-600 text-white border-red-700'
+                          : liveEstimate.status === 'Warning'
+                          ? 'bg-amber-500 text-slate-950 border-amber-600'
+                          : 'bg-emerald-600 text-white border-emerald-700'
+                      }`}
+                    >
+                      {liveEstimate.status}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : (
             <div

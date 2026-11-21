@@ -583,125 +583,153 @@ export function validateDosimeterImage(canvas: HTMLCanvasElement): DosimeterVali
       const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
       const diff = Math.max(r, g, b) - Math.min(r, g, b);
-      if (lum > 95 && diff < 48) brightCount++;
+      if (lum > 105 && diff < 45) brightCount++;
     }
     const ratio = brightCount / (w / 8);
-    if (!foundTop && ratio > 0.18) { minY = y; foundTop = true; }
-    if (foundTop && ratio > 0.18) { maxY = y; }
+    if (!foundTop && ratio > 0.20) { minY = y; foundTop = true; }
+    if (foundTop && ratio > 0.20) { maxY = y; }
   }
 
   const cardH = maxY - minY;
+  if (cardH < 30) {
+    return {
+      isValid: false,
+      score: 0,
+      rejectionReason: 'No dosimeter card substrate detected. The uploaded photo shows a dark or non-card object.',
+      checks: { substrate: false, aspect: false, brandTitle: false, centerFeature: false, qrPattern: false }
+    };
+  }
+
   const midY = Math.floor((minY + maxY) / 2);
   let minX = 0, maxX = w - 1;
 
   for (let x = 0; x < w; x += 4) {
     const idx = (midY * w + x) * 4;
     const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
-    if (lum > 85) { minX = x; break; }
+    if (lum > 95) { minX = x; break; }
   }
   for (let x = w - 1; x >= 0; x -= 4) {
     const idx = (midY * w + x) * 4;
     const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
-    if (lum > 85) { maxX = x; break; }
+    if (lum > 95) { maxX = x; break; }
   }
 
   const cardW = maxX - minX;
-  const cardAspect = cardW / Math.max(1, cardH);
+  if (cardW < 50) {
+    return {
+      isValid: false,
+      score: 0,
+      rejectionReason: 'No dosimeter card substrate detected. The card edges could not be resolved.',
+      checks: { substrate: false, aspect: false, brandTitle: false, centerFeature: false, qrPattern: false }
+    };
+  }
 
-  // 2. Measure substrate white density inside card bounds
-  let cardPixels = 0, cardWhiteCount = 0;
+  const cardAspect = cardW / cardH;
+
+  // 2. Measure substrate white density and mean luminance across the card
+  let cardPix = 0, totalLum = 0, whitePix = 0;
   for (let y = minY; y <= maxY; y += 4) {
     for (let x = minX; x <= maxX; x += 4) {
       const idx = (y * w + x) * 4;
       const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
       const diff = Math.max(r, g, b) - Math.min(r, g, b);
-      cardPixels++;
-      if (lum > 105 && diff < 48) cardWhiteCount++;
+      cardPix++;
+      totalLum += lum;
+      if (lum > 115 && diff < 42) whitePix++;
     }
   }
 
-  const whiteDensity = cardPixels > 0 ? cardWhiteCount / cardPixels : 0;
+  const whiteDensity = cardPix > 0 ? whitePix / cardPix : 0;
+  const meanLum = cardPix > 0 ? totalLum / cardPix : 0;
 
-  // 3. Scan brand text 'SULFITRACK' in upper-left
-  let brandEdges = 0;
-  const bY1 = Math.round(minY + cardH * 0.08);
-  const bY2 = Math.round(minY + cardH * 0.26);
+  // 3. Scan brand text 'SULFITRACK' in upper-left quadrant
+  const bY1 = Math.round(minY + cardH * 0.05);
+  const bY2 = Math.round(minY + cardH * 0.28);
   const bX1 = Math.round(minX + cardW * 0.03);
-  const bX2 = Math.round(minX + cardW * 0.32);
-
-  for (let y = bY1; y <= bY2; y += 3) {
+  const bX2 = Math.round(minX + cardW * 0.35);
+  let brandEdges = 0, brandDarkPixels = 0, brandTotal = 0;
+  for (let y = bY1; y <= bY2; y += 2) {
     for (let x = bX1; x <= bX2; x += 2) {
-      const idx1 = (y * w + x) * 4;
-      const idx2 = (y * w + (x + 2)) * 4;
-      const l1 = 0.299 * imgData[idx1] + 0.587 * imgData[idx1 + 1] + 0.114 * imgData[idx1 + 2];
-      const l2 = 0.299 * imgData[idx2] + 0.587 * imgData[idx2 + 1] + 0.114 * imgData[idx2 + 2];
-      if (Math.abs(l1 - l2) > 40) brandEdges++;
+      const idx = (y * w + x) * 4;
+      const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
+      brandTotal++;
+      if (lum < 95) brandDarkPixels++;
+      if (x + 2 <= bX2) {
+        const nextIdx = (y * w + (x + 2)) * 4;
+        const nextLum = 0.299 * imgData[nextIdx] + 0.587 * imgData[nextIdx + 1] + 0.114 * imgData[nextIdx + 2];
+        if (Math.abs(lum - nextLum) > 35) brandEdges++;
+      }
     }
   }
+  const brandDarkRatio = brandTotal > 0 ? brandDarkPixels / brandTotal : 0;
 
   // 4. Scan center text 'H2S PASSIVE STRIP' / aperture border
-  let centerFeatureEdges = 0;
-  const cY1 = Math.round(minY + cardH * 0.15);
-  const cY2 = Math.round(minY + cardH * 0.36);
-  const cX1 = Math.round(minX + cardW * 0.33);
+  const cY1 = Math.round(minY + cardH * 0.14);
+  const cY2 = Math.round(minY + cardH * 0.38);
+  const cX1 = Math.round(minX + cardW * 0.32);
   const cX2 = Math.round(minX + cardW * 0.68);
-
-  for (let y = cY1; y <= cY2; y += 3) {
+  let centerEdges = 0;
+  for (let y = cY1; y <= cY2; y += 2) {
     for (let x = cX1; x <= cX2; x += 2) {
-      const idx1 = (y * w + x) * 4;
-      const idx2 = (y * w + (x + 2)) * 4;
-      const l1 = 0.299 * imgData[idx1] + 0.587 * imgData[idx1 + 1] + 0.114 * imgData[idx1 + 2];
-      const l2 = 0.299 * imgData[idx2] + 0.587 * imgData[idx2 + 1] + 0.114 * imgData[idx2 + 2];
-      if (Math.abs(l1 - l2) > 40) centerFeatureEdges++;
+      const idx = (y * w + x) * 4;
+      const nextIdx = (y * w + (x + 2)) * 4;
+      const l1 = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
+      const l2 = 0.299 * imgData[nextIdx] + 0.587 * imgData[nextIdx + 1] + 0.114 * imgData[nextIdx + 2];
+      if (Math.abs(l1 - l2) > 35) centerEdges++;
     }
   }
 
-  // 5. Scan QR pattern density in right quadrant
-  let qrEdges = 0;
+  // 5. Scan QR pattern density and black-module balance in right quadrant
   const qY1 = Math.round(minY + cardH * 0.30);
   const qY2 = Math.round(minY + cardH * 0.75);
   const qX1 = Math.round(minX + cardW * 0.78);
   const qX2 = Math.round(minX + cardW * 0.98);
-
-  for (let y = qY1; y <= qY2; y += 3) {
+  let qrEdges = 0, qrDark = 0, qrTotal = 0;
+  for (let y = qY1; y <= qY2; y += 2) {
     for (let x = qX1; x <= qX2; x += 2) {
-      const idx1 = (y * w + x) * 4;
-      const idx2 = (y * w + (x + 2)) * 4;
-      const l1 = 0.299 * imgData[idx1] + 0.587 * imgData[idx1 + 1] + 0.114 * imgData[idx1 + 2];
-      const l2 = 0.299 * imgData[idx2] + 0.587 * imgData[idx2 + 1] + 0.114 * imgData[idx2 + 2];
-      if (Math.abs(l1 - l2) > 40) qrEdges++;
+      const idx = (y * w + x) * 4;
+      const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
+      qrTotal++;
+      if (lum < 100) qrDark++;
+      if (x + 2 <= qX2) {
+        const nextIdx = (y * w + (x + 2)) * 4;
+        const nextLum = 0.299 * imgData[nextIdx] + 0.587 * imgData[nextIdx + 1] + 0.114 * imgData[nextIdx + 2];
+        if (Math.abs(lum - nextLum) > 35) qrEdges++;
+      }
     }
   }
+  const qrDarkRatio = qrTotal > 0 ? qrDark / qrTotal : 0;
 
-  const hasSubstrate = whiteDensity >= 0.26;
-  const hasAspect = cardAspect >= 1.1 && cardAspect <= 4.5;
-  const hasBrand = brandEdges >= 90;
-  const hasCenterFeature = centerFeatureEdges >= 70;
-  const hasQRPattern = qrEdges >= 105;
+  // Multi-point authenticity verification
+  const hasSubstrate = whiteDensity >= 0.48 && meanLum >= 120;
+  const hasAspect = cardAspect >= 1.75 && cardAspect <= 3.8;
+  const hasBrand = brandEdges >= 180 && brandDarkRatio >= 0.04 && brandDarkRatio <= 0.30;
+  const hasCenter = centerEdges >= 120;
+  const hasQR = qrEdges >= 220 && qrDarkRatio >= 0.12 && qrDarkRatio <= 0.55;
 
   let markerCount = 0;
   if (hasBrand) markerCount++;
-  if (hasCenterFeature) markerCount++;
-  if (hasQRPattern) markerCount++;
+  if (hasCenter) markerCount++;
+  if (hasQR) markerCount++;
 
   let score = 0;
   if (hasSubstrate) score += 30;
   if (hasAspect) score += 20;
-  if (hasBrand) score += 25;
-  if (hasCenterFeature) score += 25;
-  if (hasQRPattern) score += 25;
+  if (hasBrand) score += 20;
+  if (hasCenter) score += 15;
+  if (hasQR) score += 15;
 
-  const isValid = hasSubstrate && hasAspect && (markerCount >= 2 || (hasQRPattern && markerCount >= 1));
+  const isValid = hasSubstrate && hasAspect && (markerCount >= 2);
 
   let rejectionReason: string | undefined;
   if (!isValid) {
     if (!hasSubstrate) {
-      rejectionReason = 'No dosimeter card substrate detected. Please ensure the white dosimeter card is clearly visible.';
+      rejectionReason = 'No authentic white dosimeter card substrate detected. The uploaded photo shows a dark or non-card object.';
     } else if (!hasAspect) {
-      rejectionReason = 'Invalid card aspect ratio. The dosimeter strip must be positioned horizontally in the frame.';
+      rejectionReason = `Invalid card aspect ratio (${cardAspect.toFixed(2)}). An authentic SulfiTrack dosimeter strip is a horizontal card.`;
     } else {
-      rejectionReason = 'Missing SulfiTrack strip markings (brand title, H2S aperture, or calibration QR code not detected).';
+      rejectionReason = 'Missing authentic SulfiTrack strip markings (Brand title, H2S reaction aperture, and QR calibration matrix not recognized).';
     }
   }
 
@@ -713,8 +741,8 @@ export function validateDosimeterImage(canvas: HTMLCanvasElement): DosimeterVali
       substrate: hasSubstrate,
       aspect: hasAspect,
       brandTitle: hasBrand,
-      centerFeature: hasCenterFeature,
-      qrPattern: hasQRPattern
+      centerFeature: hasCenter,
+      qrPattern: hasQR
     }
   };
 }
