@@ -61,7 +61,10 @@ export interface DatabaseSchema {
   calibration: CalibrationData;
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'server', 'data');
+const isVercel = !!process.env.VERCEL;
+const DATA_DIR = isVercel
+  ? path.join('/tmp', 'sulfitrack-data')
+  : path.resolve(process.cwd(), 'server', 'data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 const BACKUP_FILE = path.join(DATA_DIR, 'database.json.bak');
 
@@ -197,7 +200,11 @@ class DatabaseService {
     } catch (err) {
       console.error('[DatabaseService] Atomic write failed:', err);
       // Fallback direct write
-      fs.writeFileSync(DB_FILE, jsonStr, 'utf-8');
+      try {
+        fs.writeFileSync(DB_FILE, jsonStr, 'utf-8');
+      } catch (writeErr) {
+        console.warn('[DatabaseService] Storage write skipped (ephemeral/serverless env):', writeErr);
+      }
       this.cache = data;
     }
   }

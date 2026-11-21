@@ -103,3 +103,5 @@ if (fs.existsSync(distPath)) {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }
+
+export default app;
